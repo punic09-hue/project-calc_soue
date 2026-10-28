@@ -268,8 +268,14 @@ select{font:inherit;font-size:14px;color:var(--ink);background:var(--paper);bord
   </section>
 
   <section class="card">
-    <div class="top" style="align-items:center"><h2>Результат <span class="tag" id="modeTag">потолочная установка</span></h2><button type="button" class="btn" id="repBtn">Сформировать отчёт для экспертизы</button></div>
+    <div class="top" style="align-items:center"><h2>Результат <span class="tag" id="modeTag">потолочная установка</span></h2><span style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="preBtn">Предварительный отчёт</button><button type="button" class="btn" id="repBtn">Сформировать отчёт для экспертизы</button></span></div>
     <div class="hint" id="stiHint" hidden></div>
+    <div class="nman" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center">
+      <label class="chk"><input type="checkbox" id="nManOn"> Количество оповещателей задать вручную</label>
+      <span id="nManC" class="num" hidden><input id="mnx" type="number" min="1" max="60" step="1" style="width:4.5em"><small>вдоль a</small> × <input id="mny" type="number" min="1" max="60" step="1" style="width:4.5em"><small>вдоль b</small></span>
+      <span id="nManW" hidden><span class="num"><input id="mnw" type="number" min="1" max="80" step="1" style="width:4.5em"><small>шт. на стене</small></span> <label class="chk"><input type="checkbox" id="mtwo"> на двух длинных стенах</label></span>
+      <span class="ref" id="nManRef" hidden>Покрытие и все проверки пересчитаны для заданного количества.</span>
+    </div>
     <div class="tiles" style="margin-top:12px" id="tiles"></div>
     <div class="result-grid" style="margin-top:16px">
       <div>
@@ -294,7 +300,7 @@ select{font:inherit;font-size:14px;color:var(--ink);background:var(--paper);bord
   </section>
 
   <section class="card" id="report" hidden>
-    <div class="top" style="align-items:center"><h2>Отчёт для экспертизы <span class="tag">краткий</span></h2>
+    <div class="top" style="align-items:center"><h2 id="repTitle">Отчёт для экспертизы <span class="tag">краткий</span></h2>
       <div class="repbar"><button type="button" class="btn" id="repCopy">Копировать отчёт для Word</button><button type="button" class="btn" id="repImg1">Копировать рисунок 1</button><button type="button" class="btn" id="repImg2">Копировать рисунок 2</button><button type="button" class="btn" id="repClose">Скрыть</button></div></div>
     <p class="ref" id="repMsg" style="margin:8px 0">Отчёт собран по текущим данным. Название объекта и помещения можно поправить прямо в тексте. Если Word не вставил рисунки вместе с текстом, скопируйте их кнопками «Копировать рисунок».</p>
     <div class="paper" id="repPaper" contenteditable="true" spellcheck="false"></div>
@@ -416,6 +422,8 @@ function calc(st,m){
     else{r.nx=Math.max(1,Math.ceil(a/r.s-1e-9));r.ny=Math.max(1,Math.ceil(b/r.s-1e-9));
       r.sx=a/r.nx;r.sy=b/r.ny;r.devs=[];
       for(let j=0;j<r.ny;j++)for(let i=0;i<r.nx;i++)r.devs.push({x:(i+.5)*r.sx,y:(j+.5)*r.sy});}
+    if(st.nMan){r.nx=Math.max(1,Math.round(st.mnx||1));r.ny=Math.max(1,Math.round(st.mny||1));r.sx=a/r.nx;r.sy=b/r.ny;r.devs=[];
+      for(let j=0;j<r.ny;j++)for(let i=0;i<r.nx;i++)r.devs.push({x:(i+.5)*r.sx,y:(j+.5)*r.sy});}
     r.N=r.devs.length;
   }else{
     const axesFor=(ny)=>st.dir==="bi"?[[1,0],[-1,0]]:[[0,ny]];
@@ -429,6 +437,7 @@ function calc(st,m){
     for(let n=1;n<=80;n++){if(best&&2*n>=best.ds.length)break;const c=mk(n,true);if(c.sx<=lim+1e-9&&full(c.ds)){best={n,two:true,...c};break}}
     r.found=!!best;
     if(!best){best={n:Math.max(1,Math.ceil(a/Math.min(lim,a))),two:b>3}; Object.assign(best,mk(best.n,best.two))}
+    if(st.nMan){best={n:Math.max(1,Math.round(st.mnw||1)),two:!!st.mtwo};Object.assign(best,mk(best.n,best.two))}
     r.devs=best.ds;r.N=best.ds.length;r.nPerWall=best.n;r.two=best.two;r.sx=best.sx;r.sy=null;
     const d0=r.devs[0];
     r.rAxis=st.dir==="bi"?r.reach(d0,1,0):r.reach(d0,0,1);
@@ -775,9 +784,9 @@ async function svgToPng(svg,pins){
 function sectionPins(){const out=[];const W=640,H=330;
   document.querySelectorAll("#fig .pin").forEach(p=>{if(p.hidden)return;const inp=p.querySelector("input");const lab=p.querySelector("label").textContent.replace(/:.*$/,"");
     const unit=p.querySelector("small").textContent;out.push({x:parseFloat(p.style.left)/100*W,y:parseFloat(p.style.top)/100*H+5,t:`${lab} = ${String(inp.value).replace(".",",")} ${unit}`})});return out}
-async function buildReport(){
+async function buildReport(brief){
   const st=S[mode],r=lastR,isSound=calcType==="sound",isSti=calcType==="sti",dev=st.src==="db"&&DEV[st.dev]?DEV[st.dev]:null;
-  $("report").hidden=false;$("repPaper").innerHTML="<p>Собираю отчёт…</p>";
+  $("report").hidden=false;$("repTitle").innerHTML=brief?'Предварительный отчёт <span class="tag">радиус зоны</span>':'Отчёт для экспертизы <span class="tag">краткий</span>';$("repPaper").innerHTML="<p>Собираю отчёт…</p>";
   const [i1,i2]=await Promise.all([svgToPng($("secSvg"),sectionPins()),svgToPng($("planSvg"))]);repImgs=[i1,i2];
   const n1=(x,d=1)=>f1(x,d),row=(a,b)=>`<tr><td>${a}</td><td>${b}</td></tr>`;
   const kindTxt=isSound?"звуковых":"речевых",rr=mode==="ceil"?r.r:r.rAxis;
@@ -798,6 +807,13 @@ ${row("Эквивалентный УЗД постоянного шума L<sub>�
 <p>3.5. Расстановка: ${mode==="ceil"?`шаг s = min(r·√2${st.use611?`; ${r.s611} м (п. 6.11.3)`:""}${st.useB74?"; 16 м (п. В.7.4)":""}) = ${n1(r.s,2)} м; n<sub>x</sub> = ⌈${n1(st.a)}/${n1(r.s,2)}⌉ = ${r.nx}, n<sub>y</sub> = ⌈${n1(st.b)}/${n1(r.s,2)}⌉ = ${r.ny}; N = ${r.N} шт., фактический шаг ${sp}`:`по ${r.nPerWall} шт. на ${r.two?"каждой из двух длинных стен":"одной длинной стене"}, шаг ${sp}; N = ${r.N} шт.; полнота покрытия проверена по сетке точек`}.</p>
 <p>3.6. Максимальный УЗД у оповещателя: L<sub>max</sub> = L<sub>1,син</sub> − 20·lg max(Δh; 0,5) = ${n1(r.L1sin)} − 20·lg ${n1(r.dLmax,2)} = <b>${n1(r.Lmax)} дБА</b> ≤ ${r.Lup} дБА — п. ${st.f11?"6.8.5":(r.sleep?"6.9.1":"6.8.4")}.</p>
 <p>3.7. Доля площади с L ≥ L<sub>тр</sub> (сетка ${n1(r.g2,2)} м): <b>${n1(Math.min(r.cover,100),1)} %</b> (требуется 100 %, п. 6.8.2).</p>`;
+  if(brief){h=h.slice(0,h.indexOf("<p>3.5."));
+    h=h.replace(/<h1[^>]*>[^<]*<\/h1>/,`<h1 style="text-align:center">Предварительный расчёт радиуса зоны ${isSound?"звукового":"речевого"} оповещателя СОУЭ</h1>`).replace(/<h2>3\. Расчёт<\/h2>/,"<h2>3. Расчёт радиуса зоны</h2>");
+    h+=`<h2>4. Результат</h2><p>${mode==="ceil"?"Радиус круга на плане":"Дальность зоны по оси"} на расчётной высоте ${n1(r.hL,2)} м: <b>r = ${n1(rr,2)} м</b> (по лучу R = ${n1(r.R,2)} м). Требуемый уровень L<sub>тр</sub> = ${n1(r.Lreq)} дБА обеспечивается в пределах этого ${mode==="ceil"?"круга":"сектора"} от одного оповещателя.</p>
+<p style="text-align:center"><img src="${i1.url}" width="600" alt="Рисунок 1"><br>Рисунок 1 — Разрез помещения: расчётная схема (без масштаба)</p>
+<p style="text-align:center"><img src="${i2.url}" width="600" alt="Рисунок 2"><br>Рисунок 2 — План: зоны оповещателей радиусом r = ${n1(rr,2)} м</p>
+<p><i>Предварительный расчёт: расстановка, предельный уровень и покрытие всей площади проверяются в полном отчёте.</i></p>`;
+    $("repPaper").innerHTML=h;return}
   if(isSti&&r.sti){const q=r.sti;h+=`<p>3.8. Разборчивость (IEC 60268-16, косвенный метод): V = ${n1(q.V,1)} м³, S = ${n1(q.Sur,1)} м², ᾱ = 0,161V/(S·T) = ${n1(q.al,3)}, R = Sᾱ/(1 − ᾱ) = ${n1(q.R,1)} м²; Q = 2/(1 − cos φ) = ${n1(q.Q,2)}; L<sub>отр</sub> = L<sub>1</sub> + 10·lg(4π/Q) + 10·lg(4N/R) = ${n1(q.Lrev,1)} дБА; радиус гулкости r<sub>г</sub> = √(QR/16π) = ${n1(q.rc,2)} м.<br>
 m(F) = |E<sub>пр</sub> + E<sub>отр</sub>/(1 + j2πFT/13,8)| / (E<sub>пр</sub> + E<sub>отр</sub>) · 1/(1 + 10<sup>−SNR/10</sup>); SNR<sub>эфф</sub> = 10·lg(m/(1 − m)) в пределах ±15 дБ; TI = (SNR<sub>эфф</sub> + 15)/30; STI = среднее TI по 14 частотам модуляции 0,63…12,5 Гц.<br>
 Результат: STI<sub>min</sub> = <b>${n1(q.min,2)}</b>, STI<sub>ср</sub> = ${n1(q.mean,2)}; доля площади со STI ≥ ${fw(q.target)}: <b>${n1(q.pct,1)} %</b> (требуется ≥ 90 %, п. 6.11.1).</p>`}
@@ -833,6 +849,7 @@ function toForm(){
   NUMS.forEach(k=>{$(k).value=st[k]});
   $("dir").value=st.dir;$("cat").value=st.cat;$("noise").value=st.noise;
   $("f11").checked=st.f11;$("prot").checked=st.prot;$("use611").checked=st.use611;$("useB74").checked=st.useB74;$("useLight").checked=!!st.light;
+  $("nManOn").checked=!!st.nMan;for(const k of ["mnx","mny","mnw"])$(k).value=st[k]||"";$("mtwo").checked=!!st.mtwo;
   $("kindW").checked=st.kind==="wireless";$("kindP").checked=st.kind==="wired";
 }
 function fromForm(){
@@ -840,6 +857,8 @@ function fromForm(){
   NUMS.forEach(k=>{const v=parseFloat($(k).value);if(isFinite(v))st[k]=v});
   st.att=Math.min(Math.max(Math.round(st.att),0),40);if(st.src==="db"&&DEV[st.dev]&&DEV[st.dev].noVol)st.att=0;st.dir=$("dir").value;st.cat=$("cat").value;
   st.f11=$("f11").checked;st.prot=$("prot").checked;st.use611=$("use611").checked;st.useB74=$("useB74").checked;st.light=$("useLight").checked;
+  {const on=$("nManOn").checked;if(on&&!st.nMan&&lastR){if(mode==="ceil"){st.mnx=lastR.nx||1;st.mny=lastR.ny||1}else{st.mnw=lastR.nPerWall||1;st.mtwo=!!lastR.two}}
+   else if(on){for(const k of ["mnx","mny","mnw"]){const v=parseInt($(k).value);if(v>0)st[k]=Math.min(v,80)}st.mtwo=$("mtwo").checked}st.nMan=on;}
   if(st.src==="manual")st.kind=$("kindP").checked?"wired":"wireless";
   if(calcType==="sound")st.Lsin=st.Lsp;st.stiT=Math.min(Math.max(st.stiT,0.3),0.9);
   st.a=Math.min(Math.max(st.a,1),200);st.b=Math.min(Math.max(st.b,1),200);st.H=Math.min(Math.max(st.H,1.8),30);
@@ -860,6 +879,7 @@ function render(){
   $("modeTag").textContent=mode==="ceil"?"потолочная установка":"настенная установка";
   $("figcap").textContent=(mode==="ceil"?"Схема без масштаба. Оповещатель на потолке, ":"Схема без масштаба. Оповещатель на стене, ")+(S[mode].cat==="sleep"?"расчётная точка — голова спящего (п. 6.9.1); высоту головы задайте по типу спальных мест, для двухъярусных — верхний ярус.":"расчётная точка на высоте 1,5 м от пола (п. 6.8.2, 6.11.3).")+""+(mode==="wall"?" Зелёная полоса на стене — допустимая высота установки.":"")+" Жёлтые поля можно менять.";
   const r=calc(st,mode);if(calcType==="sti")r.sti=stiCalc(st,r);lastR=r;
+  $("nManC").hidden=!st.nMan||mode!=="ceil";$("nManW").hidden=!st.nMan||mode!=="wall";$("nManRef").hidden=!st.nMan;if(st.nMan){if(mode==="ceil"){$("mnx").value=st.mnx;$("mny").value=st.mny}else{$("mnw").value=st.mnw;$("mtwo").checked=!!st.mtwo}}
   $("stiBlock").hidden=calcType!=="sti";$("kindWtxt").textContent=calcType==="sound"?"Задан УЗД на 1 м (сирена 12/24/220 В, беспроводной)":"Беспроводной / автономный (задан УЗД на 1 м)";$("lbl611").hidden=calcType==="sound";$("lblB74").hidden=calcType==="sound";$("lblLight").hidden=calcType!=="sound";$("lsinRow").hidden=calcType==="sound"||st.kind!=="wireless";
   {const hn=$("stiHint");if(calcType==="speech"&&st.LN>65){hn.hidden=false;hn.textContent="Шум выше 65 дБА: упрощённая проверка разборчивости по п. 6.11.3 не применима. Переключитесь на «Разборчивость STI»."}
    else if(calcType==="sti"){hn.hidden=false;hn.textContent="Расстановка та же, что в расчёте речевых ОП. Цветом на плане показан STI в каждой точке; меняйте модель, мощность или размеры и смотрите, как меняется разборчивость."}else hn.hidden=true}
@@ -894,7 +914,8 @@ document.querySelectorAll("button[data-src]").forEach(b=>b.addEventListener("cli
   toForm();render()}));
 document.querySelectorAll(".type").forEach(b=>b.addEventListener("click",()=>{calcType=b.dataset.type;S=calcType==="sound"?SOUND:SPEECH;
   document.querySelectorAll(".type").forEach(x=>x.setAttribute("aria-pressed",x===b));$("report").hidden=true;toForm();render()}));
-$("repBtn").addEventListener("click",()=>{buildReport().then(()=>$("report").scrollIntoView({behavior:"smooth",block:"start"})).catch(e=>{$("repPaper").textContent="Не удалось собрать отчёт: "+e.message})});
+$("preBtn").addEventListener("click",()=>{buildReport(true).then(()=>$("report").scrollIntoView({behavior:"smooth",block:"start"})).catch(e=>{$("repPaper").textContent="Не удалось собрать отчёт: "+e.message})});
+$("repBtn").addEventListener("click",()=>{buildReport(false).then(()=>$("report").scrollIntoView({behavior:"smooth",block:"start"})).catch(e=>{$("repPaper").textContent="Не удалось собрать отчёт: "+e.message})});
 $("repCopy").addEventListener("click",copyHTML);$("repImg1").addEventListener("click",()=>copyImg(0));$("repImg2").addEventListener("click",()=>copyImg(1));
 $("repClose").addEventListener("click",()=>{$("report").hidden=true});
 document.querySelectorAll(".mode").forEach(b=>b.addEventListener("click",()=>{mode=b.dataset.mode;document.querySelectorAll(".mode").forEach(x=>x.setAttribute("aria-pressed",x===b));toForm();render()}));
