@@ -835,15 +835,18 @@ async function copyImg(i){const im=repImgs[i];if(!im){$("repMsg").textContent="�
 /* ---------- связь с полями ---------- */
 const NUMS=["T60","stiT","H","hm","hs","hb","gap","LN","Lsp","Lsin","S","P","dU","phi2","edge","a","b","att"];
 const esc=t=>String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-function fillDevSelect(){const groups={};for(const [k,d] of Object.entries(DEV)){if(!d.mounts.includes(mode))continue;const g=d.maker+(d.type?" — "+d.type:"");(groups[g]=groups[g]||[]).push([k,d])}
+// звуковые (сирены, светозвуковые) — только в режиме «Звуковые ОП», речевые — в «Речевые» и «STI»
+const isSnd=d=>/оповещатель (звуков|светозвуков)|сирен/i.test(d.type+" "+d.name)&&!/речев/i.test(d.type);
+const fits=(d,m)=>!!d&&d.mounts.includes(m)&&isSnd(d)===(calcType==="sound");
+function fillDevSelect(){const groups={};for(const [k,d] of Object.entries(DEV)){if(!fits(d,mode))continue;const g=d.maker+(d.type?" — "+d.type:"");(groups[g]=groups[g]||[]).push([k,d])}
   $("dev").innerHTML=Object.entries(groups).map(([g,list])=>`<optgroup label="${esc(g)}">${list.map(([k,d])=>`<option value="${esc(k)}">${esc(d.name)}${d.kind==="wired"?` — ${fw(d.S)} дБ/Вт/м, до ${fw(d.P)} Вт`:` — ${fm(d.Lsp,1)} дБА на 1 м`}</option>`).join("")}</optgroup>`).join("");
-  if(!Object.keys(groups).length)$("dev").innerHTML=`<option value="">${dbCount?"В базе нет моделей для этого способа установки":"База не загружена"}</option>`;
+  if(!Object.keys(groups).length)$("dev").innerHTML=`<option value="">${dbCount?(calcType==="sound"?"В этой базе нет звуковых оповещателей для этого способа установки":"В этой базе нет речевых оповещателей для этого способа установки"):"База не загружена"}</option>`;
   $("dbInfo").textContent=dbCount?`База: «${dbName}», моделей ${dbCount}. Новая загрузка заменит её.`:"База пуста. Загрузите файл CSV, например LPA_громкоговорители.csv.";}
 let dbName="";
 function fillTaps(st){const d=DEV[st.dev];const t=(d&&d.taps)||[st.P];$("tap").innerHTML=t.map(v=>`<option value="${v}">${fw(v)} Вт</option>`).join("")+(t.includes(st.P)?"":`<option value="${st.P}">${fw(st.P)} Вт (своё)</option>`);$("tap").value=String(st.P)}
 function toForm(){
   const st=S[mode];fillDevSelect();
-  if(st.src==="db"){const ok=DEV[st.dev]&&DEV[st.dev].mounts.includes(mode);if(!ok){st.dev=Object.keys(DEV).find(k=>DEV[k].mounts.includes(mode))||"";applyPreset(st)}$("dev").value=st.dev}
+  if(st.src==="db"){const ok=DEV[st.dev]&&fits(DEV[st.dev],mode);if(!ok){st.dev=Object.keys(DEV).find(k=>fits(DEV[k],mode))||"";applyPreset(st)}$("dev").value=st.dev}
   fillTaps(st);
   document.querySelectorAll("[data-src]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.src===st.src));
   NUMS.forEach(k=>{$(k).value=st[k]});
@@ -898,7 +901,7 @@ document.querySelectorAll("input,select").forEach(el=>el.addEventListener("input
   fromForm();render();
 }));
 $("dbBtn").addEventListener("click",()=>$("dbFile").click());
-function loadDBText(txt,name){try{addDB(txt,name);dbName=name;for(const m of ["ceil","wall"]){const st=S[m];if(st.src==="db"){st.dev=Object.keys(DEV).find(k=>DEV[k].mounts.includes(m))||"";applyPreset(st)}}toForm();render()}catch(e){$("dbInfo").textContent=`Не удалось прочитать «${name}»: проверьте, что это CSV с заголовками как в шаблоне.`}}
+function loadDBText(txt,name){try{addDB(txt,name);dbName=name;for(const m of ["ceil","wall"]){const st=S[m];if(st.src==="db"){st.dev=Object.keys(DEV).find(k=>fits(DEV[k],m))||"";applyPreset(st)}}toForm();render()}catch(e){$("dbInfo").textContent=`Не удалось прочитать «${name}»: проверьте, что это CSV с заголовками как в шаблоне.`}}
 // базы рядом с калькулятором (GitHub Pages): db/index.json = [{"file":"МАЯК_оповещатели.csv","title":"МАЯК"}, …]
 if(/^https?:/.test(location.protocol))fetch("db/index.json",{cache:"no-cache"}).then(r=>r.ok?r.json():null).then(list=>{
   if(!Array.isArray(list)||!list.length)return;const sel=$("dbSite");
@@ -910,7 +913,7 @@ $("dbFile").addEventListener("change",ev=>{const f=ev.target.files[0];if(!f)retu
   rd.onload=()=>loadDBText(String(rd.result),f.name);
   rd.readAsText(f,"utf-8");ev.target.value=""});
 document.querySelectorAll("button[data-src]").forEach(b=>b.addEventListener("click",()=>{const st=S[mode];st.src=b.dataset.src;
-  if(st.src==="db"){const ok=DEV[st.dev]&&DEV[st.dev].mounts.includes(mode);if(!ok)st.dev=Object.keys(DEV).find(k=>DEV[k].mounts.includes(mode))||"";applyPreset(st)}
+  if(st.src==="db"){const ok=DEV[st.dev]&&fits(DEV[st.dev],mode);if(!ok)st.dev=Object.keys(DEV).find(k=>fits(DEV[k],mode))||"";applyPreset(st)}
   toForm();render()}));
 document.querySelectorAll(".type").forEach(b=>b.addEventListener("click",()=>{calcType=b.dataset.type;S=calcType==="sound"?SOUND:SPEECH;
   document.querySelectorAll(".type").forEach(x=>x.setAttribute("aria-pressed",x===b));$("report").hidden=true;toForm();render()}));
