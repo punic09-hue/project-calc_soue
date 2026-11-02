@@ -16,8 +16,10 @@
 ;;;     полилинии: выбор линий -> окно параметров. Цвет, вес линии и ширина
 ;;;     сохраняются; каждая линия - отдельный кабель.
 ;;;   ММ_КАБЕЛЬ_УЧАСТОК (MM_CABLE_SEGMENT) - другая прокладка на участке:
-;;;     щелчок по отрезку между вершинами ([Точки] - часть отрезка). Все
-;;;     кабели на этом участке (наложенные) получают новый способ прокладки.
+;;;     рамка (область): все отрезки кабелей между соседними вершинами,
+;;;     попавшие в рамку, получают новые параметры; [Щелчок] - один отрезок
+;;;     и наложенные на него кабели, [Точки] - часть отрезка.
+;;;     Пересчитываются только затронутые кабели и их выноски.
 ;;;     В окне - сечения кабелей; для лотка/короба - сечение всей группы,
 ;;;     размер (Ш x В) и заполнение.
 ;;;   Прокладка: по умолчанию каждый кабель - в своём материале (гофротруба),
@@ -2154,24 +2156,85 @@
                 (if (setq pc (bk:piece-of (car c) (caddr c) (cadddr c)))
                   (bk:set-piece (car pc) (cadr pc) (caddr pc) (car r)
                                 (if (/= (cadr r) "") (bk:num (cadr r))) (caddr r) (cadddr r) (nth 4 r) (nth 5 r) (nth 6 r))))
-              (bk:update-leaders)
+              (bk:upd-leaders-for ids)
               (princ (strcat "\nУчасток: " (bk:tname (car r)) (if (/= (cadddr r) "") (strcat " " (cadddr r)) "")
                              ", кабелей: " (itoa (length cabs)) " ("
                              (bk:join (mapcar 'car *bk:sc*) ", ") ").")))))))))
 
-(defun bk:cmd-seg (/ es p1 p2 go)
+;; отрезок a-b пересекает прямоугольник lo-hi (отсечение Лианга-Барски)
+(defun bk:seg-in-rect (a b lo hi / t0 t1 dx dy ok pp qq i u)
+  (setq t0 0.0 t1 1.0 ok T dx (- (car b) (car a)) dy (- (cadr b) (cadr a)))
+  (setq pp (list (- dx) dx (- dy) dy)
+        qq (list (- (car a) (car lo)) (- (car hi) (car a)) (- (cadr a) (cadr lo)) (- (cadr hi) (cadr a))) i 0)
+  (repeat 4
+    (if ok
+      (if (equal (nth i pp) 0.0 1e-12)
+        (if (< (nth i qq) 0.0) (setq ok nil))
+        (progn (setq u (/ (nth i qq) (nth i pp)))
+               (if (< (nth i pp) 0.0) (setq t0 (max t0 u)) (setq t1 (min t1 u)))
+               (if (> t0 t1) (setq ok nil)))))
+    (setq i (1+ i)))
+  ok)
+
+;; ММ_КАБЕЛЬ_УЧАСТОК областью: все отрезки (между соседними вершинами) всех кабелей, попавшие в рамку;
+;; параметры из окна - всем этим кускам; пересчитываются только затронутые кабели и их выноски
+(defun bk:do-area (c1 c2 / lo hi ss pcs pts a b d id ids r pc e1 n)
+  (setq lo (list (min (car c1) (car c2)) (min (cadr c1) (cadr c2)))
+        hi (list (max (car c1) (car c2)) (max (cadr c1) (cadr c2))))
+  (setq ss (ssget "_C" (trans c1 0 1) (trans c2 0 1) '((-3 ("BK")))))
+  (foreach e (bk:ss->l ss)
+    (if (setq d (bk:get e))
+      (progn
+        (setq pts (bk:pts e))
+        (while (cdr pts)
+          (setq a (car pts) b (cadr pts) pts (cdr pts))
+          (if (and (> (distance a b) 1e-6) (bk:seg-in-rect a b lo hi))
+            (setq pcs (cons (list (bk:f d "id") e a b) pcs)))))))
+  (setq pcs (reverse pcs))
+  (if (null pcs)
+    (princ "\nВ области нет кабелей.")
+    (progn
+      (setq *bk:sc* nil ids nil)
+      (foreach c pcs
+        (if (not (member (car c) ids))
+          (setq ids (cons (car c) ids) d (bk:get (cadr c))
+                *bk:sc* (append *bk:sc* (list (list (bk:f d "pos") (bk:fn d "diam") (bk:f d "marka")))))))
+      (setq ids (reverse ids) e1 (cadr (car pcs)) d (bk:get e1))
+      (foreach c pcs (redraw (cadr c) 3))
+      (setq *bk:segex* (bk:f d "ex") *bk:segfl* "")
+      (setq r (bk:seg-dialog (bk:f d "code") "" (bk:r (bk:fn d "k") 2) (bk:f d "sz") (bk:fn d "md")))
+      (foreach c pcs (if (entget (cadr c)) (redraw (cadr c) 4)))
+      (if r
+        (progn
+          (setq n 0)
+          (foreach c pcs
+            (if (setq pc (bk:piece-of (car c) (caddr c) (cadddr c)))
+              (progn (bk:set-piece (car pc) (cadr pc) (caddr pc) (car r)
+                                   (if (/= (cadr r) "") (bk:num (cadr r))) (caddr r) (cadddr r) (nth 4 r) (nth 5 r) (nth 6 r))
+                     (setq n (1+ n)))))
+          (bk:upd-leaders-for ids)
+          (princ (strcat "\nОбласть: " (bk:tname (car r)) (if (/= (cadddr r) "") (strcat " " (cadddr r)) "")
+                         ", отрезков: " (itoa n) ", кабелей: " (itoa (length ids)) " ("
+                         (bk:join (mapcar 'car *bk:sc*) ", ") ")."))))))
+  (princ))
+
+(defun bk:cmd-seg (/ es p1 p2 go k)
   (setq go T)
   (while go
-    (initget "Точки")
-    (setq es (entsel "\nЩёлкните отрезок кабеля между вершинами [Точки] <выход>: "))
+    (initget "Щелчок Точки")
+    (setq p1 (getpoint "\nПервый угол области [Щелчок/Точки] <выход>: "))
     (cond
-      ((null es) (setq go nil))
-      ((= es "Точки")
+      ((null p1) (setq go nil))
+      ((= p1 "Щелчок")
+       (if (setq es (entsel "\nЩёлкните отрезок кабеля между вершинами: "))
+         (bk:do-mark (car es) (trans (cadr es) 1 0) nil T)))
+      ((= p1 "Точки")
        (if (and (setq es (entsel "\nВыберите кабель: "))
                 (setq p1 (getpoint "\nПервая точка на кабеле: "))
                 (setq p2 (getpoint p1 "\nВторая точка на кабеле: ")))
          (bk:do-mark (car es) (trans p1 1 0) (trans p2 1 0) nil)))
-      (T (bk:do-mark (car es) (trans (cadr es) 1 0) nil T))))
+      (T (if (setq p2 (getcorner p1 "\nВторой угол области: "))
+           (bk:do-area (trans p1 1 0) (trans p2 1 0))))))
   (princ))
 
 ;;; ---------- ММ_КАБЕЛЬ_СВОЙСТВА ----------
@@ -2182,7 +2245,7 @@
   (if (bk:cab-dialog)
     (progn
       (bk:rebuild *bk:cd* *bk:cp*)
-      (bk:update-leaders)
+      (bk:upd-leaders-for (list id))
       (princ (strcat "\n" (bk:f *bk:cd* "pos") ": " (bk:len-text id))))))
 
 (defun bk:cmd-props (/ ids)
@@ -2223,7 +2286,7 @@
                         (if (and kn (not (bk:stc (car p)))) (setq p (bk:replace-nth 3 kn p)))
                         p)
                      (bk:parts id))))
-         (bk:update-leaders)
+         (bk:upd-leaders-for ids)
          (princ (strcat "\nИзменено кабелей: " (itoa (length ids)) ".")))))
 
 ;;; ---------- привязка ряда кабелей к другому началу / концу ----------
@@ -4399,7 +4462,7 @@
   (vla-StartUndoMark doc)
   (apply fun nil)
   (bk:cidx-reset)
-  (if (and (member fun '(bk:cmd-draw bk:cmd-trace bk:cmd-trace-dev bk:cmd-trace-grp bk:cmd-from bk:cmd-more bk:cmd-seg bk:cmd-props bk:cmd-heal))
+  (if (and (member fun '(bk:cmd-draw bk:cmd-trace bk:cmd-trace-dev bk:cmd-trace-grp bk:cmd-from bk:cmd-more bk:cmd-heal))
            (bk:ld-auto-list))
     (vl-catch-all-apply 'bk:update-leaders))
   (setq *bk:busy* nil)
