@@ -2527,7 +2527,37 @@
 
 ;;; ---------- таблица в отдельный файл DWG, листы А3 с рамкой по ГОСТ 2.104 ----------
 ;; рамка А3 альбомная 420x297: поле слева 20, остальные 5; первый лист - основная надпись
-;; форма 2 (185x40), последующие - форма 2а (185x15). Листы в модели рядом друг с другом.
+;; форма 2 (185x40), последующие - форма 2а (185x15). Каждый лист - отдельная вкладка (Layout) А3
+;; без полей, принтер DWG To PDF, масштаб 1:1. Текст - стиль ММ_ (ISOCPEUR, аннотативный), формат DWG 2018.
+(defun bk:a3-style (d / ts arr typ val)
+  (setq ts (vl-catch-all-apply 'vla-Item (list (vla-get-TextStyles d) "ММ_")))
+  (if (vl-catch-all-error-p ts) (setq ts (vla-Add (vla-get-TextStyles d) "ММ_")))
+  (vl-catch-all-apply 'vla-put-fontFile (list ts "isocpeur.ttf"))
+  (vl-catch-all-apply 'vla-SetFont (list ts "ISOCPEUR" :vlax-false :vlax-false 0 34))
+  (vl-catch-all-apply 'vla-put-ObliqueAngle (list ts 0.0))
+  (vl-catch-all-apply 'vla-put-Width (list ts 1.0))
+  (vl-catch-all-apply 'vla-put-Height (list ts 0.0))
+  ;; аннотативность - XDATA AcadAnnotative
+  (vl-catch-all-apply 'vla-Add (list (vla-get-RegisteredApplications d) "AcadAnnotative"))
+  (setq typ (vlax-make-safearray vlax-vbInteger '(0 . 5)) val (vlax-make-safearray vlax-vbVariant '(0 . 5)))
+  (vlax-safearray-fill typ '(1001 1000 1002 1070 1070 1002))
+  (vlax-safearray-fill val (list "AcadAnnotative" "AnnotativeData" "{" 1 1 "}"))
+  (vl-catch-all-apply 'vla-SetXData (list ts typ val))
+  (vl-catch-all-apply 'vla-put-ActiveTextStyle (list d ts))
+  "ММ_")
+(defun bk:a3-layout (d nm / lay)
+  (setq lay (vla-Add (vla-get-Layouts d) nm))
+  (vl-catch-all-apply 'vla-put-ConfigName (list lay "DWG To PDF.pc3"))
+  (vl-catch-all-apply 'vla-RefreshPlotDeviceInfo (list lay))
+  (vl-catch-all-apply 'vla-put-CanonicalMediaName (list lay "ISO_full_bleed_A3_(420.00_x_297.00_MM)"))
+  (vl-catch-all-apply 'vla-put-PaperUnits (list lay acMillimeters))
+  (vl-catch-all-apply 'vla-put-PlotRotation (list lay ac0degrees))
+  (vl-catch-all-apply 'vla-put-PlotType (list lay acLayout))
+  (vl-catch-all-apply 'vla-put-UseStandardScale (list lay :vlax-true))
+  (vl-catch-all-apply 'vla-put-StandardScale (list lay ac1_1))
+  (vl-catch-all-apply 'vla-put-CenterPlot (list lay :vlax-false))
+  (vl-catch-all-apply 'vla-put-PlotWithLineweights (list lay :vlax-true))
+  lay)
 (defun bk:a3-ln (ms x1 y1 x2 y2 w / o)
   (setq o (vla-AddLine ms (vlax-3d-point (list x1 y1 0.0)) (vlax-3d-point (list x2 y2 0.0))))
   (vl-catch-all-apply 'vla-put-Lineweight (list o (if w acLnWt050 acLnWt018)))
@@ -2610,13 +2640,10 @@
       (if (vl-catch-all-error-p d)
         (alert "Не удалось создать новый чертёж.")
         (progn
-          (setq ms (vla-get-ModelSpace d) sty "ГОСТ")
-          (if (vl-catch-all-error-p (vl-catch-all-apply
-                 '(lambda (/ ts) (setq ts (vla-Add (vla-get-TextStyles d) sty)) (vla-put-fontFile ts "isocpeur.ttf") (vla-put-Height ts 0.0))))
-            (setq sty nil))
-          (setq sh 1 i 0)
+          (setq sty (bk:a3-style d) sh 1 i 0)
           (while (<= sh nsh)
-            (setq x0 (* (1- sh) 440.0) y0 0.0)
+            ;; лист - отдельная вкладка А3 без полей (DWG To PDF), рисуем в его пространстве листа
+            (setq ms (vla-get-Block (bk:a3-layout d (strcat "Лист " (itoa sh)))) x0 0.0 y0 0.0)
             ;; внешняя рамка (тонкая) и внутренняя (основная)
             (bk:a3-ln ms x0 0 (+ x0 420) 0 nil) (bk:a3-ln ms (+ x0 420) 0 (+ x0 420) 297 nil)
             (bk:a3-ln ms (+ x0 420) 297 x0 297 nil) (bk:a3-ln ms x0 297 x0 0 nil)
@@ -2648,9 +2675,14 @@
               (setq o (1+ o)))
             (vla-put-RegenerateTableSuppressed tbl :vlax-false)
             (setq sh (1+ sh)))
-          (if (vl-catch-all-error-p (vl-catch-all-apply 'vla-SaveAs (list d fn)))
+          ;; пустые стандартные вкладки - убрать
+          (vlax-for l (vla-get-Layouts d)
+            (if (and (/= (vla-get-ModelType l) :vlax-true) (not (wcmatch (vla-get-Name l) "Лист #*")))
+              (vl-catch-all-apply 'vla-Delete (list l))))
+          ;; формат DWG 2018 (не ниже 2007)
+          (if (vl-catch-all-error-p (vl-catch-all-apply 'vla-SaveAs (list d fn (cond (ac2018_dwg) (64)))))
             (alert (strcat "Не удалось сохранить файл:\n" fn))
-            (princ (strcat "\nТаблица \"" title "\": листов А3 - " (itoa nsh) ", файл " fn " (открыт в AutoCAD).")))))))
+            (princ (strcat "\nТаблица \"" title "\": листов А3 - " (itoa nsh) ", файл " fn " (открыт в AutoCAD, вкладки Лист 1..N).")))))))
   (princ))
 
 ;;; ---------- данные для таблиц ----------
