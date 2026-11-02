@@ -2525,6 +2525,134 @@
       (bk:mask (list (vlax-vla-object->ename tbl)))
       (princ (strcat "\nТаблица \"" title "\" вставлена.")))))
 
+;;; ---------- таблица в отдельный файл DWG, листы А3 с рамкой по ГОСТ 2.104 ----------
+;; рамка А3 альбомная 420x297: поле слева 20, остальные 5; первый лист - основная надпись
+;; форма 2 (185x40), последующие - форма 2а (185x15). Листы в модели рядом друг с другом.
+(defun bk:a3-ln (ms x1 y1 x2 y2 w / o)
+  (setq o (vla-AddLine ms (vlax-3d-point (list x1 y1 0.0)) (vlax-3d-point (list x2 y2 0.0))))
+  (vl-catch-all-apply 'vla-put-Lineweight (list o (if w acLnWt050 acLnWt018)))
+  o)
+(defun bk:a3-tx (ms sty x y h s / o)
+  (if (/= s "")
+    (progn
+      (setq o (vla-AddText ms s (vlax-3d-point (list x y 0.0)) h))
+      (if sty (vl-catch-all-apply 'vla-put-StyleName (list o sty)))
+      (vla-put-Alignment o acAlignmentMiddleCenter)
+      (vla-put-TextAlignmentPoint o (vlax-3d-point (list x y 0.0)))
+      o)))
+;; основная надпись. x0 - правый край рамки, y0 - низ рамки
+(defun bk:a3-stamp (ms sty x0 y0 first title sh nsh / xl xs i)
+  (setq xl (- x0 185.0))
+  (if first
+    (progn
+      ;; форма 2: 185 x 40; слева графы 7/10/23/15/10 и 8 строк по 5
+      (bk:a3-ln ms xl y0 xl (+ y0 40) T) (bk:a3-ln ms xl (+ y0 40) x0 (+ y0 40) T)
+      (setq xs (list 7 17 40 55 65))
+      (foreach x xs (bk:a3-ln ms (+ xl x) (+ y0 (if (> x 40) 0 25)) (+ xl x) (+ y0 40) T))
+      (foreach x '(17 40) (bk:a3-ln ms (+ xl x) y0 (+ xl x) (+ y0 25) T))
+      (setq i 1) (repeat 7 (bk:a3-ln ms xl (+ y0 (* 5 i)) (+ xl 65) (+ y0 (* 5 i)) (= i 5)) (setq i (1+ i)))
+      ;; справа: обозначение (15), наименование 70 / Лит.-Лист-Листов, организация
+      (bk:a3-ln ms (+ xl 65) (+ y0 25) x0 (+ y0 25) T)
+      (bk:a3-ln ms (+ xl 135) y0 (+ xl 135) (+ y0 25) T)
+      (bk:a3-ln ms (+ xl 135) (+ y0 20) x0 (+ y0 20) T)
+      (bk:a3-ln ms (+ xl 135) (+ y0 15) x0 (+ y0 15) T)
+      (foreach x '(150 165) (bk:a3-ln ms (+ xl x) (+ y0 15) (+ xl x) (+ y0 25) T))
+      (foreach x '(140 145) (bk:a3-ln ms (+ xl x) (+ y0 15) (+ xl x) (+ y0 20) nil))
+      (bk:a3-tx ms sty (+ xl 3.5) (+ y0 22.5) 2.5 "Изм.")
+      (bk:a3-tx ms sty (+ xl 12) (+ y0 22.5) 2.5 "Кол.уч")
+      (bk:a3-tx ms sty (+ xl 28.5) (+ y0 22.5) 2.5 "Лист")
+      (bk:a3-tx ms sty (+ xl 47.5) (+ y0 22.5) 2.5 "№ док.")
+      (bk:a3-tx ms sty (+ xl 60) (+ y0 22.5) 2.5 "Подп.")
+      (bk:a3-tx ms sty (+ xl 70) (+ y0 22.5) 2.5 "Дата")
+      (setq i 0)
+      (foreach lb '("Разраб." "Пров." "" "Н.контр." "Утв.")
+        (bk:a3-tx ms sty (+ xl 8.5) (+ y0 17.5 (* -5 i)) 2.5 lb) (setq i (1+ i)))
+      (bk:a3-tx ms sty (+ xl 100) (+ y0 12.5) 5.0 title)
+      (bk:a3-tx ms sty (+ xl 142.5) (+ y0 22.5) 2.5 "Лит.")
+      (bk:a3-tx ms sty (+ xl 157.5) (+ y0 22.5) 2.5 "Лист")
+      (bk:a3-tx ms sty (+ xl 175) (+ y0 22.5) 2.5 "Листов")
+      (bk:a3-tx ms sty (+ xl 157.5) (+ y0 17.5) 2.5 (itoa sh))
+      (bk:a3-tx ms sty (+ xl 175) (+ y0 17.5) 2.5 (itoa nsh)))
+    (progn
+      ;; форма 2а: 185 x 15; графы 7/10/23/15/10, обозначение 110, лист 10 (7+8)
+      (bk:a3-ln ms xl y0 xl (+ y0 15) T) (bk:a3-ln ms xl (+ y0 15) x0 (+ y0 15) T)
+      (foreach x '(7 17 40 55 65 175) (bk:a3-ln ms (+ xl x) y0 (+ xl x) (+ y0 15) T))
+      (foreach yy '(5 10) (bk:a3-ln ms xl (+ y0 yy) (+ xl 65) (+ y0 yy) (= yy 5)))
+      (bk:a3-ln ms (+ xl 175) (+ y0 8) x0 (+ y0 8) T)
+      (bk:a3-tx ms sty (+ xl 3.5) (+ y0 2.5) 2.5 "Изм.")
+      (bk:a3-tx ms sty (+ xl 12) (+ y0 2.5) 2.5 "Кол.уч")
+      (bk:a3-tx ms sty (+ xl 28.5) (+ y0 2.5) 2.5 "Лист")
+      (bk:a3-tx ms sty (+ xl 47.5) (+ y0 2.5) 2.5 "№ док.")
+      (bk:a3-tx ms sty (+ xl 60) (+ y0 2.5) 2.5 "Подп.")
+      (bk:a3-tx ms sty (+ xl 70) (+ y0 2.5) 2.5 "Дата")
+      (bk:a3-tx ms sty (+ xl 120) (+ y0 7.5) 3.5 title)
+      (bk:a3-tx ms sty (+ xl 180) (+ y0 11.5) 2.5 "Лист")
+      (bk:a3-tx ms sty (+ xl 180) (+ y0 4) 2.5 (itoa sh)))))
+
+(defun bk:a3-table (title rows / head data acad src d ms fn sty th rh hh nc widths tot k per nsh sh x0 y0 top bot tbl i j part o)
+  (setq head (car rows) data (cdr rows) nc (length head) th 2.5 rh 8.0 hh 15.0)
+  (if (= (getvar "DWGTITLED") 0)
+    (alert "Сначала сохраните чертёж: файл таблицы создаётся в его папке.")
+    (progn
+      (setq fn (strcat (getvar "DWGPREFIX") (vl-filename-base (getvar "DWGNAME")) "_" title "_" (bk:stamp) ".dwg"))
+      ;; ширины колонок по содержимому, затем вписываются в ширину поля 395 мм
+      (setq widths (mapcar '(lambda (x) 4) head))
+      (foreach r data (setq widths (mapcar '(lambda (w v) (max w (min 40 (strlen (bk:cell v))))) widths r)))
+      (setq widths (mapcar '(lambda (w h) (max w (min 14 (strlen h)))) widths head))
+      (setq tot (apply '+ widths) widths (mapcar '(lambda (w) (* 395.0 (/ (float w) tot))) widths))
+      ;; строк на листе: первый - над формой 2 (40), остальные - над формой 2а (15)
+      (defun per (first) (fix (/ (- 287.0 (if first 40.0 15.0) 5.0 hh) rh)))
+      (setq nsh 1 k (length data))
+      (if (> k (per T)) (setq nsh (+ 1 (fix (/ (+ (- k (per T)) (per nil) -1) (per nil))))))
+      (setq acad (vlax-get-acad-object) src (vla-get-ActiveDocument acad))
+      (setq d (vl-catch-all-apply 'vla-Add (list (vla-get-Documents acad))))
+      (vl-catch-all-apply 'vla-Activate (list src))
+      (if (vl-catch-all-error-p d)
+        (alert "Не удалось создать новый чертёж.")
+        (progn
+          (setq ms (vla-get-ModelSpace d) sty "ГОСТ")
+          (if (vl-catch-all-error-p (vl-catch-all-apply
+                 '(lambda (/ ts) (setq ts (vla-Add (vla-get-TextStyles d) sty)) (vla-put-fontFile ts "isocpeur.ttf") (vla-put-Height ts 0.0))))
+            (setq sty nil))
+          (setq sh 1 i 0)
+          (while (<= sh nsh)
+            (setq x0 (* (1- sh) 440.0) y0 0.0)
+            ;; внешняя рамка (тонкая) и внутренняя (основная)
+            (bk:a3-ln ms x0 0 (+ x0 420) 0 nil) (bk:a3-ln ms (+ x0 420) 0 (+ x0 420) 297 nil)
+            (bk:a3-ln ms (+ x0 420) 297 x0 297 nil) (bk:a3-ln ms x0 297 x0 0 nil)
+            (bk:a3-ln ms (+ x0 20) 5 (+ x0 415) 5 T) (bk:a3-ln ms (+ x0 415) 5 (+ x0 415) 292 T)
+            (bk:a3-ln ms (+ x0 415) 292 (+ x0 20) 292 T) (bk:a3-ln ms (+ x0 20) 292 (+ x0 20) 5 T)
+            (bk:a3-stamp ms sty (+ x0 415) 5.0 (= sh 1) title sh nsh)
+            ;; часть строк на этот лист
+            (setq part nil j 0)
+            (while (and (< j (per (= sh 1))) (< i k)) (setq part (append part (list (nth i data))) i (1+ i) j (1+ j)))
+            (setq tbl (vla-AddTable ms (vlax-3d-point (list (+ x0 20) 292 0.0)) (1+ (length part)) nc rh 20.0))
+            (vla-put-RegenerateTableSuppressed tbl :vlax-true)
+            (vl-catch-all-apply 'vla-UnmergeCells (list tbl 0 0 0 (1- nc)))
+            (vl-catch-all-apply 'vla-put-VertCellMargin (list tbl 0.8))
+            (vl-catch-all-apply 'vla-put-HorzCellMargin (list tbl 0.8))
+            (vla-SetTextHeight tbl 7 th)
+            (if sty (vl-catch-all-apply 'vla-SetTextStyle (list tbl 7 sty)))
+            (setq j 0) (foreach w widths (vla-SetColumnWidth tbl j w) (setq j (1+ j)))
+            (setq j 0)
+            (foreach h head (vla-SetText tbl 0 j h) (vl-catch-all-apply 'vla-SetCellAlignment (list tbl 0 j acMiddleCenter)) (setq j (1+ j)))
+            (vl-catch-all-apply 'vla-SetRowHeight (list tbl 0 hh))
+            (setq o 1)
+            (foreach r part
+              (setq j 0)
+              (foreach v r
+                (vla-SetText tbl o j (bk:cell v))
+                (vl-catch-all-apply 'vla-SetCellAlignment (list tbl o j acMiddleCenter))
+                (setq j (1+ j)))
+              (vl-catch-all-apply 'vla-SetRowHeight (list tbl o rh))
+              (setq o (1+ o)))
+            (vla-put-RegenerateTableSuppressed tbl :vlax-false)
+            (setq sh (1+ sh)))
+          (if (vl-catch-all-error-p (vl-catch-all-apply 'vla-SaveAs (list d fn)))
+            (alert (strcat "Не удалось сохранить файл:\n" fn))
+            (princ (strcat "\nТаблица \"" title "\": листов А3 - " (itoa nsh) ", файл " fn " (открыт в AutoCAD).")))))))
+  (princ))
+
 ;;; ---------- данные для таблиц ----------
 ;; c: (id данные участки строки_расчёта итого)
 (defun bk:cable-info (m / d parts rows)
@@ -2550,6 +2678,10 @@
               (T ""))))
 
 ;; таблица кабелей (без нулевых колонок): список строк, первая - заголовок
+;; сортировка списков: числа - как числа, строки - естественный порядок (k2 < k10)
+(defun bk:sort-less (a b)
+  (if (and (numberp a) (numberp b)) (< a b)
+    (bk:nat-less (if (numberp a) (rtos a 2 2) a) (if (numberp b) (rtos b 2 2) b))))
 ;; естественное сравнение строк: числа внутри сравниваются как числа (k2 < k10, k.8.1-2 < k.8.1-10)
 (defun bk:nat-tok (s / out i c cur dig)
   (setq i 1 cur "" dig nil)
@@ -2697,7 +2829,7 @@
             *bk:all*))
   (setq *bk:lst* (vl-sort l '(lambda (a b / x y)
                                (setq x (nth *bk:lsort* (bk:cfields a)) y (nth *bk:lsort* (bk:cfields b)))
-                               (if *bk:ldesc* (bk:less y x) (bk:less x y))))))
+                               (if *bk:ldesc* (bk:sort-less y x) (bk:sort-less x y))))))
 
 ;; ПОЗИЦИЯ блоков-стояков у концов участка "стояк": "СТ1" или "СТ1/СТ2"
 (defun bk:stoyak-pos (p / a b)
@@ -2766,7 +2898,7 @@
                " : list_box { key = \"sum\"; height = 5; width = 140; tabs = \"70 82\"; }"
                " : text { label = \"Выгрузка - выделенные кабели, а если ничего не выделено - все отобранные:\"; }"
                " : row { : button { key = \"b_csv\"; label = \"Таблица кабелей в CSV\"; }"
-               "         : button { key = \"b_tbl\"; label = \"Таблица кабелей на чертёж\"; }"
+               "         : button { key = \"b_tbl\"; label = \"Таблица кабелей в DWG (листы А3)\"; }"
                "         : button { key = \"b_scsv\"; label = \"Спецификация в CSV\"; }"
                "         : button { key = \"b_stbl\"; label = \"Спецификация на чертёж\"; } }"
                " : row { : spacer { width = 1; } : button { key = \"cancel\"; label = \"Закрыть\"; is_cancel = true; width = 16; fixed_width = true; } } }"))
@@ -2809,7 +2941,7 @@
           ((and (= res 11) ids) (bk:rebind ids) (setq *bk:all* nil))
           ((= res 11) (princ "\nСначала выделите кабели в списке."))
           ((= res 6) (bk:csv-write "кабели" (bk:cables-table cs)))
-          ((= res 7) (bk:dwg-table "Кабельный журнал" (bk:cables-table cs)))
+          ((= res 7) (bk:a3-table "Кабельный журнал" (bk:cables-table cs)))
           ((= res 8) (bk:csv-write "спецификация" (bk:spec-table cs)))
           ((= res 9) (bk:dwg-table "Спецификация кабелей и материалов прокладки" (bk:spec-table cs)))))))
   (vl-file-delete fn)
