@@ -609,9 +609,8 @@
         (sc:dev-floor (bk:f d "beg") fb) (sc:dev-floor (bk:f d "end") fe)
         hops))
 
-;; переходы по геометрии: блоки-стояки, мимо которых проходит любой отрезок кабеля на плане
-;; (расстояние от точки вставки до отрезка <= радиус блока) -> ((колонка этаж) ...) по ходу кабеля;
-;; подряд идущие блоки одной колонки сливаются (этаж - последний)
+;; переходы по геометрии: блок-стояк засчитывается, если вершина кабельной линии лежит внутри
+;; его габарита -> ((колонка этаж) ...) по ходу кабеля; подряд одна колонка сливается (этаж - последний)
 (defun sc:rpts-init (/ e o mn mx)
   (setq *sc:rpts* nil)
   (foreach x *sc:rcol*
@@ -619,15 +618,10 @@
       (progn
         (setq o (vlax-ename->vla-object e))
         (vla-GetBoundingBox o 'mn 'mx)
-        (setq mn (vlax-safearray->list mn) mx (vlax-safearray->list mx))
-        (setq *sc:rpts* (cons (list (car x) (bk:2d (cdr (assoc 10 (entget e))))
-                                    (max *bk:brad* (* 0.5 (distance (bk:2d mn) (bk:2d mx)))))
-                              *sc:rpts*))))))
-(defun sc:seg-dist (p a b / v w l u)
-  (setq v (mapcar '- b a) w (mapcar '- p a) l (+ (* (car v) (car v)) (* (cadr v) (cadr v))))
-  (setq u (if (> l 1e-9) (max 0.0 (min 1.0 (/ (+ (* (car w) (car v)) (* (cadr w) (cadr v))) l))) 0.0))
-  (list (distance p (mapcar '+ a (mapcar '(lambda (z) (* u z)) v))) u))
-(defun sc:geo-hops (parts / out pa pb hit dd add)
+        (setq *sc:rpts* (cons (list (car x) (vlax-safearray->list mn) (vlax-safearray->list mx)) *sc:rpts*))))))
+(defun sc:in-box (p b)
+  (and (<= (car (cadr b)) (car p) (car (caddr b))) (<= (cadr (cadr b)) (cadr p) (cadr (caddr b)))))
+(defun sc:geo-hops (parts / out add)
   (defun add (h / k f lh)
     (setq k (sc:rcol-of h) f (if k (sc:dev-floor h "") ""))
     (if (and k (/= f ""))
@@ -637,20 +631,10 @@
                (setq out (append out (list (list k f))))))))
   (foreach p parts
     (if (= (car p) "STOYAK")
-      ;; стояк: блоки в начале и в конце участка (как без флажка)
+      ;; участок-стояк: блоки начала и конца (как без флажка)
       (foreach h (list (bk:block-at (car (caddr p))) (bk:block-at (last (caddr p)))) (if (/= h "") (add h)))
-      (progn
-        (setq pa nil)
-        (foreach pt (caddr p)
-          (setq pb (bk:2d pt))
-          (if pa
-            (progn
-              (setq hit nil)
-              (foreach rp *sc:rpts*
-                (setq dd (sc:seg-dist (cadr rp) pa pb))
-                (if (<= (car dd) (caddr rp)) (setq hit (cons (list (cadr dd) (car rp)) hit))))
-              (foreach x (vl-sort hit '(lambda (m n) (< (car m) (car n)))) (add (cadr x)))))
-          (setq pa pb)))))
+      (foreach pt (caddr p)
+        (foreach rb *sc:rpts* (if (sc:in-box pt rb) (add (car rb)))))))
   out)
 
 ;; порядок приборов шлейфа: обход от начала (узел, входящий в несколько шлейфов, или конец цепочки)
@@ -678,9 +662,9 @@
 ;;; ---------- примитивы схемы (в мм, затем масштабируются) ----------
 ;; (L слой точки) (T слой точка высота текст выравн) (M слой точка высота текст) (B слой точка масштаб хэндл_источника)
 ;; группа цвета кабеля: префикс ПОЗИЦИИ (буквы до цифр: k, km) + марка
-(defun sc:pfx (pos / i) (setq i 1) (while (and (<= i (strlen pos)) (not (wcmatch (substr pos i 1) "#,`.,-,_, "))) (setq i (1+ i))) (substr pos 1 (1- i)))
+(defun sc:pfx (pos / i) (setq i 1) (while (and (<= i (strlen pos)) (not (wcmatch (substr pos i 1) "#"))) (setq i (1+ i))) (substr pos 1 (1- i)))
 (defun sc:pfx-of (k) (substr k 1 (vl-string-search " | " k)))
-(defun sc:ckey (d) (strcat (sc:pfx (bk:f d "pos")) " | " (bk:f d "marka")))
+(defun sc:ckey (d) (strcat " | " (bk:f d "marka")))  ; цвет - по типу (марке) кабеля
 (defun sc:loop-marka (l) (sc:ckey (bk:get (car (bk:segs (car (cadr l)))))))
 ;; цвет группы: заданный пользователем ("mcol"), иначе по палитре по порядку групп
 (defun sc:mcol (m / p i)
