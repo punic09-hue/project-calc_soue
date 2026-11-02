@@ -2550,25 +2550,26 @@
               (T ""))))
 
 ;; òàáëèöà êàáåëåé (áåç íóëåâûõ êîëîíîê): ñïèñîê ñòðîê, ïåðâàÿ - çàãîëîâîê
-(defun bk:cables-table (cs / codes head rows r sum used)
+(defun bk:cables-table (cs / head rows r sum used d fl)
   (foreach tp *bk:types*
     (if (vl-some '(lambda (c) (vl-some '(lambda (x) (and (= (nth 5 x) (car tp)) (> (nth 3 x) 0))) (nth 3 c))) cs)
       (setq used (append used (list tp)))))
-  (setq head (append '("¹" "Ïîçèöèÿ" "Ýòàæ" "Íîìåíêëàòóðà" "Äèàìåòð, ìì" "Îòêóäà" "Ïîìåùåíèå íà÷àëà" "Êóäà" "Ïîìåùåíèå êîíöà")
-                     (mapcar '(lambda (tp) (strcat (cadr tp) ", ì")) used)
-                     '("â ò.÷. îïóñêè, ì" "Èòîãî, ì")))
+  (defun fl (h / v) (if (and h (/= h "") (bk:hent h)) (bk:attr (bk:hent h) "ÝÒÀÆ") ""))
+  ;; ¹, ÏÎÇÈÖÈß, ÍÎÌÅÍÊËÀÒÓÐÀ, íà÷àëî (ýòàæ, ïîìåùåíèå), êîíåö (ýòàæ, ïîìåùåíèå), îáùàÿ äëèíà, äëèíû ïî ñïîñîáàì ïðîêëàäêè
+  (setq head (append '("¹" "ÏÎÇÈÖÈß" "ÍÎÌÅÍÊËÀÒÓÐÀ" "ÍÀ×ÀËÎ" "ÝÒÀÆ (ÍÀ×ÀËÎ)" "ÏÎÌÅÙÅÍÈÅ (ÍÀ×ÀËÎ)"
+                       "ÊÎÍÅÖ" "ÝÒÀÆ (ÊÎÍÅÖ)" "ÏÎÌÅÙÅÍÈÅ (ÊÎÍÅÖ)" "ÎÁÙÀß ÄËÈÍÀ, ì")
+                     (mapcar '(lambda (tp) (strcat (cadr tp) ", ì")) used)))
   (setq r 0)
   (foreach c cs
-    (setq r (1+ r))
-    (setq rows (cons (append (list (itoa r) (bk:f (cadr c) "pos") (bk:cfloor (cadr c)) (bk:f (cadr c) "marka")
-                                   (if (/= (bk:f (cadr c) "diam") "") (bk:fn (cadr c) "diam") "") (bk:dev-pos (bk:f (cadr c) "beg")) (bk:dev-room (bk:f (cadr c) "beg"))
-                                   (bk:dev-pos (bk:f (cadr c) "end")) (bk:dev-room (bk:f (cadr c) "end")))
+    (setq r (1+ r) d (cadr c))
+    (setq rows (cons (append (list (itoa r) (bk:f d "pos") (bk:f d "marka")
+                                   (bk:dev-pos (bk:f d "beg")) (fl (bk:f d "beg")) (bk:dev-room (bk:f d "beg"))
+                                   (bk:dev-pos (bk:f d "end")) (fl (bk:f d "end")) (bk:dev-room (bk:f d "end"))
+                                   (bk:total (nth 3 c)))
                              (mapcar '(lambda (tp)
                                         (setq sum (apply '+ (mapcar '(lambda (x) (if (= (nth 5 x) (car tp)) (nth 7 x) 0.0)) (nth 3 c))))
                                         (if (> sum 0) (bk:ceil0 sum) ""))
-                                     used)
-                             (list (bk:ceil0 (apply '+ (mapcar '(lambda (x) (if (= (car x) "S") 0.0 (nth 7 x))) (nth 3 c))))
-                                   (bk:total (nth 3 c))))
+                                     used))
                      rows)))
   (cons head (reverse rows)))
 
