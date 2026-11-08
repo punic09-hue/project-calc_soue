@@ -2796,29 +2796,36 @@
 ;; ---------- кабель с ветками = одна строка ----------
 ;; c: (id d parts rows total [члены]). √руппа - корень и все ветки (ключ lin). d - корн€, с ключами
 ;; ends (концы всех веток и корн€ через зап€тую), efl / erm (их этажи / помещени€); строки расчЄта и длины суммируютс€.
-(defun bk:merge-lines (cs / g k p out d m ends fls rms)
+(defun bk:merge-lines (cs / g k p out d m ends fls rms begs hs h)
+  (bk:bbx-init)
   (foreach c cs
     ;; группа - кабели с одной ѕќ«»÷»≈… (ветки имеют ѕќ«»÷»ё основного кабел€)
     (setq k (if (/= (bk:f (cadr c) "pos") "") (strcase (bk:f (cadr c) "pos")) (car c)))
     (if (setq p (assoc k g)) (setq g (subst (append p (list c)) p g)) (setq g (cons (list k c) g))))
   (foreach x (reverse g)
-    (if (null (cddr x))
-      (setq out (cons (cadr x) out))
+    (setq m (cdr x)
+          ;; основной - без родител€ (par), иначе самый длинный
+          d (cadr (cond ((vl-some '(lambda (c) (if (= (bk:f (cadr c) "par") "") c)) m))
+                        ((car (vl-sort m '(lambda (a b) (> (nth 4 a) (nth 4 b)))))))))
+    ;; приборы линии: концы частей и приборы в вершинах (печатаемый габарит), кроме начал частей (щит, коробка ответвлени€)
+    (setq begs (vl-remove "" (mapcar '(lambda (c) (bk:f (cadr c) "beg")) m)) hs nil)
+    (foreach c m
+      (foreach pr (nth 2 c)
+        (if (not (bk:stc (car pr)))
+          (foreach v (caddr pr)
+            (if (and (setq h (bk:dev-at-vtx (bk:2d v))) (/= (bk:dev-pos h) "") (not (member h begs)) (not (member h hs)))
+              (setq hs (cons h hs))))))
+      (if (and (/= (setq h (bk:f (cadr c) "end")) "") (not (member h begs)) (not (member h hs))) (setq hs (cons h hs))))
+    (setq hs (reverse hs))
+    (if (and (null (cdr m)) (or (null hs) (and (null (cdr hs)) (= (car hs) (bk:f d "end")))))
+      (setq out (cons (car m) out))            ; обычный кабель без промежуточных приборов - как было
       (progn
-        (setq m (cdr x)
-              ;; основной - без родител€ (par), иначе самый длинный
-              d (cadr (cond ((vl-some '(lambda (c) (if (= (bk:f (cadr c) "par") "") c)) m))
-                            ((car (vl-sort m '(lambda (a b) (> (nth 4 a) (nth 4 b)))))))))
-        (setq ends nil fls nil rms nil)
-        (foreach c m
-          (if (/= (bk:f (cadr c) "end") "")
-            (progn
-              (setq ends (cons (bk:dev-pos (bk:f (cadr c) "end")) ends))
-              (setq fls (cons (bk:attr (bk:hent (bk:f (cadr c) "end")) "Ё“ј∆") fls)
-                    rms (cons (bk:dev-room (bk:f (cadr c) "end")) rms)))))
+        (setq ends (mapcar 'bk:dev-pos hs)
+              fls (mapcar '(lambda (h) (bk:attr (bk:hent h) "Ё“ј∆")) hs)
+              rms (mapcar 'bk:dev-room hs))
         (setq d (bk:setf (bk:setf (bk:setf d "ends" (bk:pos-ranges (vl-remove "" ends)))
-                                  "efl" (bk:join (bk:uniq (vl-remove "" (reverse fls))) ", "))
-                         "erm" (bk:join (bk:uniq (vl-remove "" (reverse rms))) ", ")))
+                                  "efl" (bk:join (bk:uniq (vl-remove "" fls)) ", "))
+                         "erm" (bk:join (bk:uniq (vl-remove "" rms)) ", ")))
         (setq out (cons (list (bk:f d "id") d (apply 'append (mapcar 'caddr m)) (apply 'append (mapcar 'cadddr m))
                               (apply '+ (mapcar '(lambda (c) (nth 4 c)) m)) m)
                         out)))))
