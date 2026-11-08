@@ -611,14 +611,12 @@
 
 ;; переходы по геометрии: блок-стояк засчитывается, если вершина кабельной линии лежит внутри
 ;; его габарита -> ((колонка этаж) ...) по ходу кабеля; подряд одна колонка сливается (этаж - последний)
-(defun sc:rpts-init (/ e o mn mx)
-  (setq *sc:rpts* nil)
+(defun sc:rpts-init (/ e b)
+  ;; габарит блока-стояка - по печатаемым примитивам (зона действия не учитывается)
+  (setq *sc:rpts* nil *bk:pbb* nil *bk:lpl* nil)
   (foreach x *sc:rcol*
-    (if (setq e (bk:hent (car x)))
-      (progn
-        (setq o (vlax-ename->vla-object e))
-        (vla-GetBoundingBox o 'mn 'mx)
-        (setq *sc:rpts* (cons (list (car x) (vlax-safearray->list mn) (vlax-safearray->list mx)) *sc:rpts*))))))
+    (if (and (setq e (bk:hent (car x))) (setq b (bk:pbox-ins e)))
+      (setq *sc:rpts* (cons (list (car x) (car b) (cadr b)) *sc:rpts*)))))
 (defun sc:in-box (p b)
   (and (<= (car (cadr b)) (car p) (car (caddr b))) (<= (cadr (cadr b)) (cadr p) (cadr (caddr b)))))
 (defun sc:geo-hops (parts / out add)
