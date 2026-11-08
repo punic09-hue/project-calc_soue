@@ -2256,9 +2256,60 @@
       (bk:upd-leaders-for (list id))
       (princ (strcat "\n" (bk:f *bk:cd* "pos") ": " (bk:len-text id))))))
 
+;; части кабеля (основной и ветки) - все кабели с той же ПОЗИЦИЕЙ; основной - первым
+(defun bk:line-ids (id / pos l main)
+  (setq pos (strcase (bk:f (bk:get (car (bk:segs id))) "pos")))
+  (foreach m (bk:cable-map) (if (= (strcase (bk:f (cadr m) "pos")) pos) (setq l (cons (car m) l))))
+  (if (null l) (setq l (list id)))
+  (setq main (cond ((vl-some '(lambda (i) (if (= (bk:f (bk:get (car (bk:segs i))) "par") "") i)) l)) ((car l))))
+  (cons main (vl-remove main l)))
+;; окно частей кабеля: основной кабель и ветки отдельными строками; двойной щелчок / «Свойства» - окно части
+(defun bk:edit-line (id / ids fn dl res sel rows n d)
+  (setq res 1)
+  (while (= res 1)
+    (setq ids (bk:line-ids id) n 0 rows nil)
+    (foreach i ids
+      (setq d (bk:get (car (bk:segs i))))
+      (setq rows (append rows (list (strcat (if (= n 0) "Основной кабель" (strcat "Ветка " (itoa n))) "\t" (bk:f d "pos") "\t"
+                                            (bk:beg-name d) "\t" (bk:ch-flr (bk:f d "beg")) "\t"
+                                            (bk:dev-pos (bk:f d "end")) "\t" (bk:ch-flr (bk:f d "end")) "\t"
+                                            (itoa (bk:ceil0 (bk:total (bk:calc d (bk:parts i))))) " м")))
+            n (1+ n)))
+    (setq fn (bk:write-dcl "blok_kabel_line.dcl"
+               '("bk_ln : dialog { label = \"Кабель и его ветки\";"
+                 " : list_box { key = \"hdr\"; height = 2; width = 110; tabs = \"18 30 52 66 88 102\"; is_tab_stop = false; }"
+                 " : list_box { key = \"lst\"; height = 10; width = 110; tabs = \"18 30 52 66 88 102\"; }"
+                 " : row { : button { key = \"b_ed\"; label = \"Свойства выбранной части...\"; }"
+                 "         : button { key = \"b_all\"; label = \"Общие свойства всех частей...\"; }"
+                 "         : button { key = \"b_show\"; label = \"Показать на чертеже\"; }"
+                 "         : button { key = \"cancel\"; label = \"Закрыть\"; is_cancel = true; width = 14; } } }"))
+          dl (load_dialog fn) res 0)
+    (if (new_dialog "bk_ln" dl)
+      (progn
+        (start_list "hdr") (add_list "Часть\tПозиция\tНачало\tЭтаж нач.\tКонец\tЭтаж кон.\tДлина") (end_list)
+        (start_list "lst") (foreach x rows (add_list x)) (end_list)
+        (bk:st "lst" (if sel sel "0"))
+        (action_tile "lst" "(setq sel $value) (if (= $reason 4) (done_dialog 1))")
+        (action_tile "b_ed" "(setq sel (get_tile \"lst\")) (done_dialog 1)")
+        (action_tile "b_all" "(done_dialog 2)")
+        (action_tile "b_show" "(setq sel (get_tile \"lst\")) (done_dialog 3)")
+        (action_tile "cancel" "(done_dialog 0)")
+        (setq res (start_dialog))))
+    (unload_dialog dl)
+    (vl-file-delete fn)
+    (cond ((and (= res 1) sel (/= sel "")) (bk:edit-one (nth (atoi sel) ids)))
+          ((= res 1))
+          ((= res 2) (bk:edit-many ids) (setq res 1))
+          ((= res 3) (bk:show-cable (nth (atoi (if (and sel (/= sel "")) sel "0")) ids)) (setq res 1))))
+  (princ))
+
 (defun bk:cmd-props (/ ids)
   (setq ids (bk:pick-ids "\nВыберите кабель (или несколько): "))
-  (cond ((null ids)) ((= (length ids) 1) (bk:edit-one (car ids))) (T (bk:edit-many ids)))
+  (cond ((null ids))
+        ;; кабель с ветками - окно частей (основной и ветки отдельно)
+        ((and (= (length ids) 1) (cdr (bk:line-ids (car ids)))) (bk:edit-line (car ids)))
+        ((= (length ids) 1) (bk:edit-one (car ids)))
+        (T (bk:edit-many ids)))
   (princ))
 
 (defun bk:edit-many (ids / ds com new d ps h0 k0 hn kn)
@@ -3108,6 +3159,7 @@
         (cond
           ((and (= res 2) ids) (bk:show-cable (car ids)))
           ;; правка кабеля с ветками - всех его частей
+          ((and (= res 3) ids (= (length ids) 1) (cdr (bk:line-ids (car ids)))) (bk:edit-line (car ids)) (setq *bk:all* nil))
           ((and (= res 3) ids) (setq ids (mapcar 'car (bk:unmerge (mapcar '(lambda (i) (nth i *bk:lst*)) (bk:idxs sel)))))
                                (if (cdr ids) (bk:edit-many ids) (bk:edit-one (car ids))) (setq *bk:all* nil))
           ((= res 10) (if (bk:ren-dialog cs) (progn (bk:sync-members cs) (bk:sync-branch-pos) (setq *bk:all* nil sel ""))))
