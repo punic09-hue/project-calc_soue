@@ -136,9 +136,10 @@
 ;;;   ММ_КАБЕЛЬ_ЕЩЕ (MM_CABLE_MORE) - новый кабель по пути выбранного:
 ;;;     те же участки, прокладка, опуски, привязки; своя марка и ПОЗИЦИЯ.
 ;;;   ММ_КАБЕЛЬ_ВЕТКА (MM_CABLE_BRANCH) - ответвление: щелчок по кабелю в точке
-;;;     ответвления, окно параметров (марка родителя, ПОЗИЦИЯ <родитель>.1),
-;;;     полилиния до прибора. Ветка - отдельная ПОЗИЦИЯ, связана с родителем
-;;;     (par) и корнем линии (lin). Коробку в точке ответвления ставит
+;;;     ответвления, окно параметров (как у кабеля, та же ПОЗИЦИЯ),
+;;;     полилиния до прибора. Ветка связана с родителем (par) и корнем (lin);
+;;;     в ММ_КАБЕЛЬ_ВСЕ и журнале кабель с ветками - одна строка; кнопка
+;;;     «Участки между устройствами в CSV» - все участки кабеля по вершинам. Коробку в точке ответвления ставит
 ;;;     пользователь; если прибор начала имеет ПРИМ-1 «с коробкой [марка]» -
 ;;;     коробка не рисуется, но идёт в спецификацию (шт.).
 ;;;   В окне СВОЙСТВА: "Начало/Конец - указать блок <" - привязать кабель к
@@ -1531,7 +1532,8 @@
 (defun bk:dialog (par multi hdr / fn id res out tp)
   (setq res 5)
   ;; новый кабель: сразу предложить свободную позицию
-  (if (not multi) (setq *bk:used* (bk:used-pos) par (bk:replace-nth 2 (bk:free-pos (nth 2 par) *bk:used*) par)))
+  (if (not multi) (setq *bk:used* (bk:used-pos) par (if *bk:brpos* par (bk:replace-nth 2 (bk:free-pos (nth 2 par) *bk:used*) par))))
+  (if *bk:brpos* (setq *bk:used* nil))   ; ветка: ПОЗИЦИЯ как у основного кабеля - занятость не проверяется
   (while (member res '(5 6))
   (setq fn (bk:write-dcl "blok_kabel.dcl"
              (append
@@ -2707,7 +2709,7 @@
 (defun bk:cfields (c / d)
   (setq d (cadr c))
   (list (bk:f d "pos") (bk:cfloor d) (bk:f d "marka") (bk:f d "diam")
-        (bk:dev-pos (bk:f d "beg")) (bk:dev-pos (bk:f d "end")) (nth 4 c) (bk:f d "layer")
+        (bk:dev-pos (bk:f d "beg")) (bk:end-name d) (nth 4 c) (bk:f d "layer")
         (bk:dev-room (bk:f d "beg")) (bk:dev-room (bk:f d "end"))
         ;; существующая трасса: да - все участки, част. - часть участков
         (cond ((null (nth 2 c)) "")
@@ -2740,6 +2742,93 @@
           (T (setq r (if (< (car x) (car y)) 1 2)))))
   (cond (r (= r 1)) (T (and (null x) (not (null y))))))
 
+;; ---------- кабель с ветками = одна строка ----------
+;; c: (id d parts rows total [члены]). Группа - корень и все ветки (ключ lin). d - корня, с ключами
+;; ends (концы всех веток и корня через запятую), efl / erm (их этажи / помещения); строки расчёта и длины суммируются.
+(defun bk:merge-lines (cs / g k p out d m ends fls rms)
+  (foreach c cs
+    (setq k (if (/= (bk:f (cadr c) "lin") "") (bk:f (cadr c) "lin") (car c)))
+    (if (setq p (assoc k g)) (setq g (subst (append p (list c)) p g)) (setq g (cons (list k c) g))))
+  (foreach x (reverse g)
+    (if (null (cddr x))
+      (setq out (cons (cadr x) out))
+      (progn
+        (setq m (cdr x)
+              d (cadr (cond ((vl-some '(lambda (c) (if (= (car c) (car x)) c)) m)) ((car m)))))
+        (setq ends nil fls nil rms nil)
+        (foreach c m
+          (if (/= (bk:f (cadr c) "end") "")
+            (progn
+              (setq ends (cons (bk:dev-pos (bk:f (cadr c) "end")) ends))
+              (setq fls (cons (bk:attr (bk:hent (bk:f (cadr c) "end")) "ЭТАЖ") fls)
+                    rms (cons (bk:dev-room (bk:f (cadr c) "end")) rms)))))
+        (setq d (bk:setf (bk:setf (bk:setf d "ends" (bk:pos-ranges (vl-remove "" ends)))
+                                  "efl" (bk:join (bk:uniq (vl-remove "" (reverse fls))) ", "))
+                         "erm" (bk:join (bk:uniq (vl-remove "" (reverse rms))) ", ")))
+        (setq out (cons (list (car x) d (apply 'append (mapcar 'caddr m)) (apply 'append (mapcar 'cadddr m))
+                              (apply '+ (mapcar '(lambda (c) (nth 4 c)) m)) m)
+                        out)))))
+  (reverse out))
+;; обратно в отдельные кабели (для спецификации, правки, участков)
+(defun bk:unmerge (cs) (apply 'append (mapcar '(lambda (c) (if (nth 5 c) (nth 5 c) (list c))) cs)))
+(defun bk:end-name (d) (if (/= (bk:f d "ends") "") (bk:f d "ends") (bk:dev-pos (bk:f d "end"))))
+(defun bk:end-x (d k v) (if (/= (bk:f d "ends") "") (bk:f d k) v))
+;; ПОЗИЦИЯ веток = ПОЗИЦИЯ корня (после переименования)
+(defun bk:sync-branch-pos (/ rd)
+  (foreach e (bk:all-segs)
+    (if (and (/= (bk:f (bk:get e) "lin") "") (setq rd (bk:get (car (bk:segs (bk:f (bk:get e) "lin")))))
+             (/= (bk:f rd "pos") (bk:f (bk:get e) "pos")))
+      (bk:put e (bk:setf (bk:get e) "pos" (bk:f rd "pos"))))))
+
+;; ---------- участки между устройствами (по вершинам кабеля) ----------
+;; устройство в вершине: блок, внутри габарита которого вершина; из нескольких - чей центр ближе
+(defun bk:bbx-init (/ o mn mx)
+  (setq *bk:bbx* nil)
+  (foreach e (bk:ss->l (ssget "_X" (list '(0 . "INSERT") (cons 410 (getvar "CTAB")))))
+    (setq o (vlax-ename->vla-object e))
+    (if (not (vl-catch-all-error-p (vl-catch-all-apply 'vla-GetBoundingBox (list o 'mn 'mx))))
+      (progn (setq mn (vlax-safearray->list mn) mx (vlax-safearray->list mx))
+             (setq *bk:bbx* (cons (list (cdr (assoc 5 (entget e))) (bk:2d mn) (bk:2d mx)
+                                        (list (/ (+ (car mn) (car mx)) 2.0) (/ (+ (cadr mn) (cadr mx)) 2.0)))
+                                  *bk:bbx*))))))
+(defun bk:dev-at-vtx (p / best bd dd)
+  (foreach b *bk:bbx*
+    (if (and (<= (car (cadr b)) (car p) (car (caddr b))) (<= (cadr (cadr b)) (cadr p) (cadr (caddr b))))
+      (progn (setq dd (distance p (cadddr b)))
+             (if (or (null bd) (< dd bd)) (setq bd dd best (car b))))))
+  best)
+;; участки одного кабеля (группы полилиний): ((h1 h2 длина_м) ...); h - хэндл блока или nil (точка без устройства)
+(defun bk:dev-pieces (id / out cur len pa h first)
+  (setq len 0.0 first T)
+  (foreach p (bk:parts id)
+    (if (bk:stc (car p))
+      (progn (setq len (+ len (bk:plen-m p)))
+             (if (setq h (bk:dev-at-vtx (bk:2d (last (caddr p)))))
+               (if (/= h cur) (setq out (cons (list cur h len) out) cur h len 0.0))))
+      (foreach v (caddr p)
+        (setq v (bk:2d v))
+        (if pa (setq len (+ len (/ (distance pa v) 1000.0))))
+        (setq pa v h (bk:dev-at-vtx v))
+        (cond (first (setq cur h first nil))
+              ((and h (/= h cur)) (setq out (cons (list cur h len) out) cur h len 0.0))))))
+  (if (> len 0.0005) (setq out (cons (list cur nil len) out)))
+  (reverse out))
+(defun bk:pieces-table (cs / rows n d fl nm)
+  (bk:bbx-init)
+  (defun fl (h) (if h (bk:attr (bk:hent h) "ЭТАЖ") ""))
+  (defun nm (h) (if h (bk:dev-pos h) "точка без устройства"))
+  (setq rows (list '("№" "ПОЗИЦИЯ" "НОМЕНКЛАТУРА" "ОТ" "ЭТАЖ (ОТ)" "ПОМЕЩЕНИЕ (ОТ)" "ДО" "ЭТАЖ (ДО)" "ПОМЕЩЕНИЕ (ДО)" "ДЛИНА ПО ЧЕРТЕЖУ, м"))
+        n 0)
+  (foreach c (bk:unmerge cs)
+    (setq d (cadr c))
+    (foreach q (bk:dev-pieces (car c))
+      (setq rows (cons (list (itoa (setq n (1+ n))) (bk:f d "pos") (bk:f d "marka")
+                             (nm (car q)) (fl (car q)) (if (car q) (bk:dev-room (car q)) "")
+                             (nm (cadr q)) (fl (cadr q)) (if (cadr q) (bk:dev-room (cadr q)) "")
+                             (bk:ceil0 (caddr q)))
+                       rows))))
+  (reverse rows))
+
 ;; порядок для журнала: корни линий по ПОЗИЦИИ, под каждым - его ветки (рекурсивно, тоже по ПОЗИЦИИ)
 (defun bk:tree-order (cs / ids kids roots out walk pl srt)
   (defun srt (l) (vl-sort l '(lambda (m n) (bk:nat-less (bk:f (cadr m) "pos") (bk:f (cadr n) "pos")))))
@@ -2771,15 +2860,15 @@
       (setq used (append used (list tp)))))
   (defun fl (h / v) (if (and h (/= h "") (bk:hent h)) (bk:attr (bk:hent h) "ЭТАЖ") ""))
   ;; №, ПОЗИЦИЯ, НОМЕНКЛАТУРА, начало (этаж, помещение), конец (этаж, помещение), общая длина, длины по способам прокладки
-  (setq head (append '("№" "ПОЗИЦИЯ" "ЛИНИЯ" "НОМЕНКЛАТУРА" "НАЧАЛО" "ЭТАЖ (НАЧАЛО)" "ПОМЕЩЕНИЕ (НАЧАЛО)"
+  (setq head (append '("№" "ПОЗИЦИЯ" "НОМЕНКЛАТУРА" "НАЧАЛО" "ЭТАЖ (НАЧАЛО)" "ПОМЕЩЕНИЕ (НАЧАЛО)"
                        "КОНЕЦ" "ЭТАЖ (КОНЕЦ)" "ПОМЕЩЕНИЕ (КОНЕЦ)" "ОБЩАЯ ДЛИНА, м")
                      (mapcar '(lambda (tp) (strcat (cadr tp) ", м")) used)))
   (setq r 0)
   (foreach c cs
     (setq r (1+ r) d (cadr c))
-    (setq rows (cons (append (list (itoa r) (bk:f d "pos") (bk:line-pos d) (bk:f d "marka")
+    (setq rows (cons (append (list (itoa r) (bk:f d "pos") (bk:f d "marka")
                                    (bk:beg-name d) (fl (bk:f d "beg")) (bk:dev-room (bk:f d "beg"))
-                                   (bk:dev-pos (bk:f d "end")) (fl (bk:f d "end")) (bk:dev-room (bk:f d "end"))
+                                   (bk:end-name d) (bk:end-x d "efl" (fl (bk:f d "end"))) (bk:end-x d "erm" (bk:dev-room (bk:f d "end")))
                                    (bk:total (nth 3 c)))
                              (mapcar '(lambda (tp)
                                         (setq sum (apply '+ (mapcar '(lambda (x) (if (= (nth 5 x) (car tp)) (nth 7 x) 0.0)) (nth 3 c))))
@@ -2890,7 +2979,7 @@
 
 ;;; ---------- ММ_КАБЕЛЬ_ВСЕ ----------
 (defun bk:list-rows (/ l fi m)
-  (if (not *bk:all*) (setq *bk:all* (mapcar 'bk:cable-info (bk:cable-map))))
+  (if (not *bk:all*) (setq *bk:all* (bk:merge-lines (mapcar 'bk:cable-info (bk:cable-map)))))
   (setq fi *bk:lfld* m (bk:up *bk:lflt*))
   (setq l (vl-remove-if-not
             '(lambda (c / f)
@@ -2971,10 +3060,11 @@
                " : row { : button { key = \"b_csv\"; label = \"Таблица кабелей в CSV\"; }"
                "         : button { key = \"b_tbl\"; label = \"Таблица кабелей в DWG (листы А3)\"; }"
                "         : button { key = \"b_scsv\"; label = \"Спецификация в CSV\"; }"
-               "         : button { key = \"b_stbl\"; label = \"Спецификация на чертёж\"; } }"
+               "         : button { key = \"b_stbl\"; label = \"Спецификация на чертёж\"; }"
+               "         : button { key = \"b_pcsv\"; label = \"Участки между устройствами в CSV\"; } }"
                " : row { : spacer { width = 1; } : button { key = \"cancel\"; label = \"Закрыть\"; is_cancel = true; width = 16; fixed_width = true; } } }"))
         res 2 sel "")
-  (while (member res '(2 3 6 7 8 9 10))
+  (while (member res '(2 3 6 7 8 9 10 12))
     (setq id (load_dialog fn))
     (if (not (new_dialog "bk_list" id))
       (setq res 0)
@@ -2998,7 +3088,7 @@
         (action_tile "b_show" "(setq sel (get_tile \"lst\")) (done_dialog 2)")
         (action_tile "b_ren" "(setq sel (get_tile \"lst\")) (done_dialog 10)")
         (action_tile "b_bind" "(setq sel (get_tile \"lst\")) (done_dialog 11)")
-        (foreach k '(("b_csv" . 6) ("b_tbl" . 7) ("b_scsv" . 8) ("b_stbl" . 9))
+        (foreach k '(("b_csv" . 6) ("b_tbl" . 7) ("b_scsv" . 8) ("b_stbl" . 9) ("b_pcsv" . 12))
           (action_tile (car k) (strcat "(setq sel (get_tile \"lst\")) (done_dialog " (itoa (cdr k)) ")")))
         (action_tile "cancel" "(done_dialog 0)")
         (setq res (start_dialog))
@@ -3007,14 +3097,17 @@
               cs  (if (bk:idxs sel) (mapcar '(lambda (i) (nth i *bk:lst*)) (bk:idxs sel)) *bk:lst*))
         (cond
           ((and (= res 2) ids) (bk:show-cable (car ids)))
-          ((and (= res 3) ids) (if (cdr ids) (bk:edit-many ids) (bk:edit-one (car ids))) (setq *bk:all* nil))
-          ((= res 10) (if (bk:ren-dialog cs) (setq *bk:all* nil sel "")))
+          ;; правка кабеля с ветками - всех его частей
+          ((and (= res 3) ids) (setq ids (mapcar 'car (bk:unmerge (mapcar '(lambda (i) (nth i *bk:lst*)) (bk:idxs sel)))))
+                               (if (cdr ids) (bk:edit-many ids) (bk:edit-one (car ids))) (setq *bk:all* nil))
+          ((= res 10) (if (bk:ren-dialog cs) (progn (bk:sync-branch-pos) (setq *bk:all* nil sel ""))))
+          ((= res 12) (bk:csv-write "участки" (bk:pieces-table cs)))
           ((and (= res 11) ids) (bk:rebind ids) (setq *bk:all* nil))
           ((= res 11) (princ "\nСначала выделите кабели в списке."))
           ((= res 6) (bk:csv-write "кабели" (bk:cables-table cs)))
           ((= res 7) (bk:a3-table "Кабельный журнал" (bk:cables-table cs)))
-          ((= res 8) (bk:csv-write "спецификация" (bk:spec-table cs)))
-          ((= res 9) (bk:dwg-table "Спецификация кабелей и материалов прокладки" (bk:spec-table cs)))))))
+          ((= res 8) (bk:csv-write "спецификация" (bk:spec-table (bk:unmerge cs))))
+          ((= res 9) (bk:dwg-table "Спецификация кабелей и материалов прокладки" (bk:spec-table (bk:unmerge cs))))))))
   (vl-file-delete fn)
   (princ))
 
@@ -3679,7 +3772,7 @@
 (defun bk:num-str (x) (vl-string-translate "." "," (rtos x 2 1)))
 
 (defun bk:cmd-journal (/ k cs)
-  (setq cs (vl-sort (mapcar 'bk:cable-info (bk:cable-map))
+  (setq cs (vl-sort (bk:merge-lines (mapcar 'bk:cable-info (bk:cable-map)))
                     '(lambda (a b) (bk:less (bk:f (cadr a) "pos") (bk:f (cadr b) "pos")))))
   (if (null cs)
     (princ "\nНа чертеже нет кабелей.")
@@ -3742,8 +3835,8 @@
   (princ))
 
 ;;; ---------- ММ_КАБЕЛЬ_ВЕТКА: ответвление от кабеля (дерево СОУЭ, ответвления шлейфов) ----------
-;; Ветка - отдельный кабель со своей ПОЗИЦИЕЙ (по умолчанию <ПОЗИЦИЯ родителя>.1, .2 ...), той же маркой
-;; и прокладкой. Ключи XDATA: par - id родительского кабеля, lin - id корня линии (у корня = свой id).
+;; Ветка - отдельная группа полилиний с той же ПОЗИЦИЕЙ, маркой и прокладкой, что у основного кабеля;
+;; в ММ_КАБЕЛЬ_ВСЕ и журнале кабель с ветками - одна строка (bk:merge-lines). Ключи XDATA: par - id родительского кабеля, lin - id корня линии (у корня = свой id).
 ;; Начало ветки - блок в точке ответвления (коробка, поставленная вручную, или прибор); если блока нет -
 ;; в таблицах «Начало» = «отв. от <ПОЗИЦИЯ родителя>».
 (defun bk:root-of (id / d n)
@@ -3760,11 +3853,14 @@
         (setq o (vlax-ename->vla-object e)
               p (vlax-curve-getClosestPointTo o (trans (cadr es) 1 0))
               pid (bk:f d "id"))
-        (setq par (list (bk:f d "marka") (bk:f d "diam") (bk:free-pos (strcat (bk:f d "pos") ".1") nil)
+        (setq *bk:brpos* T)
+        (setq par (list (bk:f d "marka") (bk:f d "diam") (bk:f d "pos")
                         (bk:f d "code") (rtos (bk:fn d "h") 2 2) (rtos (max 1.0 (bk:fn d "k")) 2 2) "0"
                         (bk:f d "layer") (bk:f d "lts") (bk:f d "floor")))
-        (if (setq par (bk:dialog par nil (strcat "Ветка от кабеля " (bk:f d "pos")
-                                                 ". После OK рисуйте полилинию от точки ответвления до прибора.")))
+        (setq par (bk:dialog par nil (strcat "Ветка кабеля " (bk:f d "pos")
+                                             " (та же ПОЗИЦИЯ). После OK рисуйте полилинию от точки ответвления до прибора."))
+              *bk:brpos* nil)
+        (if par
           (progn
             (setq prev-e (entlast))
             (command "_.PLINE" (trans p 0 1))
@@ -4884,6 +4980,6 @@
 (princ "\n  ММ_КАБЕЛЬ_ЛИНИИ         - линии по типам прокладки / все сплошные / все штриховые")
 (princ "\n  ММ_КАБЕЛЬ_ТИПЫ          - добавить / изменить способы прокладки")
 (princ "\n  ММ_КАБЕЛЬ_ЕЩЕ           - ещё кабель по пути выбранного, те же параметры")
-(princ "\n  ММ_КАБЕЛЬ_ВЕТКА         - ответвление от кабеля: своя ПОЗИЦИЯ, связь с линией")
+(princ "\n  ММ_КАБЕЛЬ_ВЕТКА         - ветка кабеля (та же ПОЗИЦИЯ, в журнале - одна строка)")
 (princ "\n==================================================================")
 (princ)
