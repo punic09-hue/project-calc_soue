@@ -2740,21 +2740,44 @@
           (T (setq r (if (< (car x) (car y)) 1 2)))))
   (cond (r (= r 1)) (T (and (null x) (not (null y))))))
 
+;; порядок для журнала: корни линий по ПОЗИЦИИ, под каждым - его ветки (рекурсивно, тоже по ПОЗИЦИИ)
+(defun bk:tree-order (cs / ids kids roots out walk pl srt)
+  (defun srt (l) (vl-sort l '(lambda (m n) (bk:nat-less (bk:f (cadr m) "pos") (bk:f (cadr n) "pos")))))
+  (setq ids (mapcar 'car cs))
+  (foreach c cs
+    (setq pl (bk:f (cadr c) "par"))
+    (if (and (/= pl "") (member pl ids) (/= pl (car c)))
+      (setq kids (cons (cons pl c) kids))
+      (setq roots (cons c roots))))
+  (defun walk (c / ch)
+    (if (not (member c out))
+      (progn
+        (setq out (cons c out))
+        (foreach k (srt (mapcar 'cdr (vl-remove-if-not '(lambda (x) (= (car x) (car c))) kids))) (walk k)))))
+  (foreach c (srt roots) (walk c))
+  ;; на случай циклических ссылок - оставшиеся в конце
+  (foreach c (srt cs) (if (not (member c out)) (setq out (cons c out))))
+  (reverse out))
+;; ПОЗИЦИЯ корня линии (у обычного кабеля - своя)
+(defun bk:line-pos (d / rd)
+  (if (and (/= (bk:f d "par") "") (setq rd (bk:get (car (bk:segs (bk:root-of (bk:f d "id")))))))
+    (bk:f rd "pos")
+    (bk:f d "pos")))
 (defun bk:cables-table (cs / head rows r sum used d fl)
-  ;; строки - по ПОЗИЦИИ (естественный порядок: 1, 2, ... 10)
-  (setq cs (vl-sort cs '(lambda (m n) (bk:nat-less (bk:f (cadr m) "pos") (bk:f (cadr n) "pos")))))
+  ;; строки - по ПОЗИЦИИ (естественный порядок: 1, 2, ... 10); ветки - сразу под своим кабелем (дерево линии)
+  (setq cs (bk:tree-order cs))
   (foreach tp *bk:types*
     (if (vl-some '(lambda (c) (vl-some '(lambda (x) (and (= (nth 5 x) (car tp)) (> (nth 3 x) 0))) (nth 3 c))) cs)
       (setq used (append used (list tp)))))
   (defun fl (h / v) (if (and h (/= h "") (bk:hent h)) (bk:attr (bk:hent h) "ЭТАЖ") ""))
   ;; №, ПОЗИЦИЯ, НОМЕНКЛАТУРА, начало (этаж, помещение), конец (этаж, помещение), общая длина, длины по способам прокладки
-  (setq head (append '("№" "ПОЗИЦИЯ" "НОМЕНКЛАТУРА" "НАЧАЛО" "ЭТАЖ (НАЧАЛО)" "ПОМЕЩЕНИЕ (НАЧАЛО)"
+  (setq head (append '("№" "ПОЗИЦИЯ" "ЛИНИЯ" "НОМЕНКЛАТУРА" "НАЧАЛО" "ЭТАЖ (НАЧАЛО)" "ПОМЕЩЕНИЕ (НАЧАЛО)"
                        "КОНЕЦ" "ЭТАЖ (КОНЕЦ)" "ПОМЕЩЕНИЕ (КОНЕЦ)" "ОБЩАЯ ДЛИНА, м")
                      (mapcar '(lambda (tp) (strcat (cadr tp) ", м")) used)))
   (setq r 0)
   (foreach c cs
     (setq r (1+ r) d (cadr c))
-    (setq rows (cons (append (list (itoa r) (bk:f d "pos") (bk:f d "marka")
+    (setq rows (cons (append (list (itoa r) (bk:f d "pos") (bk:line-pos d) (bk:f d "marka")
                                    (bk:beg-name d) (fl (bk:f d "beg")) (bk:dev-room (bk:f d "beg"))
                                    (bk:dev-pos (bk:f d "end")) (fl (bk:f d "end")) (bk:dev-room (bk:f d "end"))
                                    (bk:total (nth 3 c)))
@@ -3662,9 +3685,9 @@
     (princ "\nНа чертеже нет кабелей.")
     (progn
       (initget "Таблица Csv")
-      (setq k (getkword "\nКабельный журнал: [Таблица на чертёж/Csv файл] <Csv>: "))
+      (setq k (getkword "\nКабельный журнал (кабели и ветки), Таблица - файл DWG с листами А3 [Таблица/Csv] <Csv>: "))
       (if (= k "Таблица")
-        (bk:dwg-table "Кабельный журнал" (bk:cables-table cs))
+        (bk:a3-table "Кабельный журнал" (bk:cables-table cs))
         (bk:csv-write "кабели" (bk:cables-table cs)))))
   (princ))
 
