@@ -460,7 +460,7 @@
 ;; кабель: id marka diam pos beg end ld layer lts bcode bk ecode ek
 ;; участок: code h k tcode tk ord sz(размер лотка/короба "ШxВ")   (tcode/tk - переход по высоте перед участком)
 (setq *bk:keys* '("id" "marka" "diam" "pos" "floor" "beg" "end" "ld" "layer" "lts"
-                  "bcode" "bk" "ecode" "ek" "bfix" "efix" "bh" "eh" "bmd" "emd" "md" "tmd" "sz" "slen" "sflm" "sfl" "ex" "bex" "eex" "floors" "et" "eu" "ei" "ep" "ecos" "edu" "esec" "emat" "sp" "code" "h" "k" "tcode" "tk" "ord"))
+                  "bcode" "bk" "ecode" "ek" "bfix" "efix" "bh" "eh" "bmd" "emd" "md" "tmd" "sz" "slen" "sflm" "sfl" "ex" "bex" "eex" "floors" "et" "eu" "ei" "ep" "ecos" "edu" "esec" "emat" "sp" "code" "h" "k" "tcode" "tk" "ord" "par" "lin"))
 
 (defun bk:get (e / x d i s)
   (if (and e (entget e) (setq x (assoc -3 (entget e '("BK")))))
@@ -2747,14 +2747,17 @@
 ;; ends (концы всех веток и корня через запятую), efl / erm (их этажи / помещения); строки расчёта и длины суммируются.
 (defun bk:merge-lines (cs / g k p out d m ends fls rms)
   (foreach c cs
-    (setq k (if (/= (bk:f (cadr c) "lin") "") (bk:f (cadr c) "lin") (car c)))
+    ;; группа - кабели с одной ПОЗИЦИЕЙ (ветки имеют ПОЗИЦИЮ основного кабеля)
+    (setq k (if (/= (bk:f (cadr c) "pos") "") (strcase (bk:f (cadr c) "pos")) (car c)))
     (if (setq p (assoc k g)) (setq g (subst (append p (list c)) p g)) (setq g (cons (list k c) g))))
   (foreach x (reverse g)
     (if (null (cddr x))
       (setq out (cons (cadr x) out))
       (progn
         (setq m (cdr x)
-              d (cadr (cond ((vl-some '(lambda (c) (if (= (car c) (car x)) c)) m)) ((car m)))))
+              ;; основной - без родителя (par), иначе самый длинный
+              d (cadr (cond ((vl-some '(lambda (c) (if (= (bk:f (cadr c) "par") "") c)) m))
+                            ((car (vl-sort m '(lambda (a b) (> (nth 4 a) (nth 4 b)))))))))
         (setq ends nil fls nil rms nil)
         (foreach c m
           (if (/= (bk:f (cadr c) "end") "")
@@ -2765,7 +2768,7 @@
         (setq d (bk:setf (bk:setf (bk:setf d "ends" (bk:pos-ranges (vl-remove "" ends)))
                                   "efl" (bk:join (bk:uniq (vl-remove "" (reverse fls))) ", "))
                          "erm" (bk:join (bk:uniq (vl-remove "" (reverse rms))) ", ")))
-        (setq out (cons (list (car x) d (apply 'append (mapcar 'caddr m)) (apply 'append (mapcar 'cadddr m))
+        (setq out (cons (list (bk:f d "id") d (apply 'append (mapcar 'caddr m)) (apply 'append (mapcar 'cadddr m))
                               (apply '+ (mapcar '(lambda (c) (nth 4 c)) m)) m)
                         out)))))
   (reverse out))
@@ -2782,6 +2785,13 @@
 
 ;; ---------- участки между устройствами (по вершинам кабеля) ----------
 ;; устройство в вершине: блок, внутри габарита которого вершина; из нескольких - чей центр ближе
+;; после переименования объединённой строки: всем частям - ПОЗИЦИЯ основного кабеля
+(defun bk:sync-members (cs / np)
+  (foreach c cs
+    (if (nth 5 c)
+      (progn
+        (setq np (bk:f (bk:get (car (bk:segs (car c)))) "pos"))
+        (foreach m (nth 5 c) (if (/= (car m) (car c)) (bk:set-field (car m) "pos" np)))))))
 (defun bk:bbx-init (/ o mn mx)
   (setq *bk:bbx* nil)
   (foreach e (bk:ss->l (ssget "_X" (list '(0 . "INSERT") (cons 410 (getvar "CTAB")))))
@@ -3100,7 +3110,7 @@
           ;; правка кабеля с ветками - всех его частей
           ((and (= res 3) ids) (setq ids (mapcar 'car (bk:unmerge (mapcar '(lambda (i) (nth i *bk:lst*)) (bk:idxs sel)))))
                                (if (cdr ids) (bk:edit-many ids) (bk:edit-one (car ids))) (setq *bk:all* nil))
-          ((= res 10) (if (bk:ren-dialog cs) (progn (bk:sync-branch-pos) (setq *bk:all* nil sel ""))))
+          ((= res 10) (if (bk:ren-dialog cs) (progn (bk:sync-members cs) (bk:sync-branch-pos) (setq *bk:all* nil sel ""))))
           ((= res 12) (bk:csv-write "участки" (bk:pieces-table cs)))
           ((and (= res 11) ids) (bk:rebind ids) (setq *bk:all* nil))
           ((= res 11) (princ "\nСначала выделите кабели в списке."))
