@@ -639,7 +639,7 @@
 ;; не стояк, не перенос, не начало/конец кабеля
 (defun sc:mid-dev (v ends / h)
   (setq h (bk:dev-at-vtx v))
-  (if (and h (not (member h ends)) (/= (bk:dev-pos h) "") (not (sc:is-riser h)) (not (member h *sc:pblk*))) h))
+  (if (and h (not (member h ends)) (/= (bk:dev-pos h) "") (not (sc:is-riser h)) (not (member h *sc:pblk*)) (not (member h *bk:spech*))) h))
 ;; кабель -> список кусков в формате sc:cable: (id pos начало конец этаж_нач этаж_кон переходы)
 (defun sc:hop (pr nxt / ha hb k f)      ; то же, что hk в sc:cable
   (setq ha (bk:block-at (car (caddr pr))) hb (bk:block-at (last (caddr pr)))
@@ -757,6 +757,7 @@
   ;; кабель, проходящий через приборы (вершина внутри блока прибора), делится на куски между приборами;
   ;; кабель без промежуточных приборов - как раньше, один кусок от начала до конца
   (bk:bbx-init)
+  (setq *bk:spech* (bk:special-blocks cs))
   (setq cabs (apply 'append (mapcar 'sc:cable-split cs)))
   ;; конец кабеля на невыбранном блоке (напр. зона обзора поверх камеры) - выбранный блок в том же месте
   (if *sc:bsel* (setq cabs (mapcar 'sc:fix-ends cabs)))

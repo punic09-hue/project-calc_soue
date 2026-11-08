@@ -2796,8 +2796,19 @@
 ;; ---------- кабель с ветками = одна строка ----------
 ;; c: (id d parts rows total [члены]). Группа - корень и все ветки (ключ lin). d - корня, с ключами
 ;; ends (концы всех веток и корня через запятую), efl / erm (их этажи / помещения); строки расчёта и длины суммируются.
+;; блоки стояков и переносов на др. лист (на концах участков STOYAK / PERENOS) - не приборы:
+;; на схеме, в журнале и в участках не учитываются
+(defun bk:special-blocks (cs / l h)
+  (foreach c cs
+    (foreach p (nth 2 c)
+      (if (bk:stc (car p))
+        (foreach q (list (car (caddr p)) (last (caddr p)))
+          (foreach h (list (bk:block-at q) (bk:dev-at-vtx (bk:2d q)))
+            (if (and h (/= h "") (not (member h l))) (setq l (cons h l))))))))
+  l)
 (defun bk:merge-lines (cs / g k p out d m ends fls rms begs hs h)
   (bk:bbx-init)
+  (setq *bk:spech* (bk:special-blocks cs))
   (foreach c cs
     ;; группа - кабели с одной ПОЗИЦИЕЙ (ветки имеют ПОЗИЦИЮ основного кабеля)
     (setq k (if (/= (bk:f (cadr c) "pos") "") (strcase (bk:f (cadr c) "pos")) (car c)))
@@ -2809,13 +2820,15 @@
                         ((car (vl-sort m '(lambda (a b) (> (nth 4 a) (nth 4 b)))))))))
     ;; приборы линии: концы частей и приборы в вершинах (печатаемый габарит), кроме начал частей (щит, коробка ответвления)
     (setq begs (vl-remove "" (mapcar '(lambda (c) (bk:f (cadr c) "beg")) m)) hs nil)
+    ;; и блок в первой вершине каждой части (коробка ответвления, даже если не привязана как начало)
+    (foreach c m (if (and (nth 2 c) (setq h (bk:dev-at-vtx (bk:2d (car (caddr (car (nth 2 c)))))))) (setq begs (cons h begs))))
     (foreach c m
       (foreach pr (nth 2 c)
         (if (not (bk:stc (car pr)))
           (foreach v (caddr pr)
-            (if (and (setq h (bk:dev-at-vtx (bk:2d v))) (/= (bk:dev-pos h) "") (not (member h begs)) (not (member h hs)))
+            (if (and (setq h (bk:dev-at-vtx (bk:2d v))) (/= (bk:dev-pos h) "") (not (member h begs)) (not (member h hs)) (not (member h *bk:spech*)))
               (setq hs (cons h hs))))))
-      (if (and (/= (setq h (bk:f (cadr c) "end")) "") (not (member h begs)) (not (member h hs))) (setq hs (cons h hs))))
+      (if (and (/= (setq h (bk:f (cadr c) "end")) "") (not (member h begs)) (not (member h hs)) (not (member h *bk:spech*))) (setq hs (cons h hs))))
     (setq hs (reverse hs))
     (if (and (null (cdr m)) (or (null hs) (and (null (cdr hs)) (= (car hs) (bk:f d "end")))))
       (setq out (cons (car m) out))            ; обычный кабель без промежуточных приборов - как было
@@ -2908,18 +2921,20 @@
   (foreach p (bk:parts id)
     (if (bk:stc (car p))
       (progn (setq len (+ len (bk:plen-m p)))
-             (if (setq h (bk:dev-at-vtx (bk:2d (last (caddr p)))))
+             (if (and (setq h (bk:dev-at-vtx (bk:2d (last (caddr p))))) (not (member h *bk:spech*)))
                (if (/= h cur) (setq out (cons (list cur h len) out) cur h len 0.0))))
       (foreach v (caddr p)
         (setq v (bk:2d v))
         (if pa (setq len (+ len (/ (distance pa v) 1000.0))))
         (setq pa v h (bk:dev-at-vtx v))
+        (if (member h *bk:spech*) (setq h nil))   ; стояк / перенос - не прибор
         (cond (first (setq cur h first nil))
               ((and h (/= h cur)) (setq out (cons (list cur h len) out) cur h len 0.0))))))
   (if (> len 0.0005) (setq out (cons (list cur nil len) out)))
   (reverse out))
 (defun bk:pieces-table (cs / rows n d fl nm)
   (bk:bbx-init)
+  (setq *bk:spech* (bk:special-blocks (bk:unmerge cs)))
   (defun fl (h) (if h (bk:attr (bk:hent h) "ЭТАЖ") ""))
   (defun nm (h) (if h (bk:dev-pos h) "точка без устройства"))
   (setq rows (list '("№" "ПОЗИЦИЯ" "НОМЕНКЛАТУРА" "ОТ" "ЭТАЖ (ОТ)" "ПОМЕЩЕНИЕ (ОТ)" "ДО" "ЭТАЖ (ДО)" "ПОМЕЩЕНИЕ (ДО)" "ДЛИНА ПО ЧЕРТЕЖУ, м"))
