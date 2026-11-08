@@ -2277,8 +2277,8 @@
             n (1+ n)))
     (setq fn (bk:write-dcl "blok_kabel_line.dcl"
                '("bk_ln : dialog { label = \"Кабель и его ветки\";"
-                 " : list_box { key = \"hdr\"; height = 2; width = 110; tabs = \"18 30 52 66 88 102\"; is_tab_stop = false; }"
-                 " : list_box { key = \"lst\"; height = 10; width = 110; tabs = \"18 30 52 66 88 102\"; }"
+                 " : list_box { key = \"hdr\"; height = 2; width = 140; tabs = \"16 26 50 62 86 98\"; is_tab_stop = false; }"
+                 " : list_box { key = \"lst\"; height = 10; width = 140; tabs = \"16 26 50 62 86 98\"; }"
                  " : row { : button { key = \"b_ed\"; label = \"Свойства выбранной части...\"; }"
                  "         : button { key = \"b_all\"; label = \"Общие свойства всех частей...\"; }"
                  "         : button { key = \"b_show\"; label = \"Показать на чертеже\"; }"
