@@ -637,6 +637,37 @@
         (foreach rb *sc:rpts* (if (sc:in-box pt rb) (add (car rb)))))))
   out)
 
+;; промежуточный прибор в вершине кабеля: блок с ПОЗИЦИЕЙ (вершина внутри габарита, ближайший центр),
+;; не стояк, не перенос, не начало/конец кабеля
+(defun sc:mid-dev (v ends / h)
+  (setq h (bk:dev-at-vtx v))
+  (if (and h (not (member h ends)) (/= (bk:dev-pos h) "") (not (sc:is-riser h)) (not (member h *sc:pblk*))) h))
+;; кабель -> список кусков в формате sc:cable: (id pos начало конец этаж_нач этаж_кон переходы)
+(defun sc:hop (pr nxt / ha hb k f)      ; то же, что hk в sc:cable
+  (setq ha (bk:block-at (car (caddr pr))) hb (bk:block-at (last (caddr pr)))
+        k (cond ((sc:rcol-of hb)) ((sc:rcol-of ha)) (T (strcat "Ст " (bk:stoyak-pos pr))))
+        f (if (/= hb "") (sc:dev-floor hb "") ""))
+  (if (= f "") (setq f (sc:floor-top (bk:sfl nxt))))
+  (list k f))
+(defun sc:cable-split (c / base d parts ends cur hops out h pr)
+  (setq base (sc:cable c) d (cadr c) parts (nth 2 c)
+        ends (vl-remove "" (list (bk:f d "beg") (bk:f d "end"))) cur (nth 2 base))
+  (foreach p parts
+    (if (= (car p) "STOYAK")
+      (setq pr p)
+      (progn
+       (if pr (setq hops (append hops (list (sc:hop pr p))) pr nil))
+       (foreach v (caddr p)
+        (if (and (setq h (sc:mid-dev (bk:2d v) ends)) (/= h cur))
+          (setq out (append out (list (list (car c) (nth 1 base) cur h
+                                            (if (= cur (nth 2 base)) (nth 4 base) (sc:dev-floor cur ""))
+                                            (sc:dev-floor h "") hops)))
+                cur h hops nil))))))
+  (if pr (setq hops (append hops (list (sc:hop pr pr)))))
+  (if (null out)
+    (list base)
+    (append out (list (list (car c) (nth 1 base) cur (nth 3 base) (sc:dev-floor cur "") (nth 5 base) hops)))))
+
 ;; порядок приборов шлейфа: обход от начала (узел, входящий в несколько шлейфов, или конец цепочки)
 (defun sc:chain (cabs shared / adj a b start order stack n nb)
   (foreach c cabs
@@ -725,7 +756,10 @@
   (setq *sc:stage* "разбор кабелей")
   (sc:risers-init cs)
   (sc:rpts-init)
-  (setq cabs (mapcar 'sc:cable cs))
+  ;; кабель, проходящий через приборы (вершина внутри блока прибора), делится на куски между приборами;
+  ;; кабель без промежуточных приборов - как раньше, один кусок от начала до конца
+  (bk:bbx-init)
+  (setq cabs (apply 'append (mapcar 'sc:cable-split cs)))
   ;; конец кабеля на невыбранном блоке (напр. зона обзора поверх камеры) - выбранный блок в том же месте
   (if *sc:bsel* (setq cabs (mapcar 'sc:fix-ends cabs)))
   ;; кабель показывается, если хотя бы один его конец - выбранный блок; второй конец
