@@ -135,6 +135,12 @@
 ;;;     неиспользуемый. Хранятся в чертеже. Та же кнопка есть в окнах.
 ;;;   ММ_КАБЕЛЬ_ЕЩЕ (MM_CABLE_MORE) - новый кабель по пути выбранного:
 ;;;     те же участки, прокладка, опуски, привязки; своя марка и ПОЗИЦИЯ.
+;;;   ММ_КАБЕЛЬ_ВЕТКА (MM_CABLE_BRANCH) - ответвление: щелчок по кабелю в точке
+;;;     ответвления, окно параметров (марка родителя, ПОЗИЦИЯ <родитель>.1),
+;;;     полилиния до прибора. Ветка - отдельная ПОЗИЦИЯ, связана с родителем
+;;;     (par) и корнем линии (lin). Коробку в точке ответвления ставит
+;;;     пользователь; если прибор начала имеет ПРИМ-1 «с коробкой [марка]» -
+;;;     коробка не рисуется, но идёт в спецификацию (шт.).
 ;;;   В окне СВОЙСТВА: "Начало/Конец - указать блок <" - привязать кабель к
 ;;;     блоку (с подтягиванием конца линии), "Найти по концам" - авто,
 ;;;     "Отвязать" - убрать привязку.
@@ -2749,7 +2755,7 @@
   (foreach c cs
     (setq r (1+ r) d (cadr c))
     (setq rows (cons (append (list (itoa r) (bk:f d "pos") (bk:f d "marka")
-                                   (bk:dev-pos (bk:f d "beg")) (fl (bk:f d "beg")) (bk:dev-room (bk:f d "beg"))
+                                   (bk:beg-name d) (fl (bk:f d "beg")) (bk:dev-room (bk:f d "beg"))
                                    (bk:dev-pos (bk:f d "end")) (fl (bk:f d "end")) (bk:dev-room (bk:f d "end"))
                                    (bk:total (nth 3 c)))
                              (mapcar '(lambda (tp)
@@ -2836,6 +2842,16 @@
                                                 "м" (bk:ceil0 len)
                                                 (if (= mode "O") "общий для группы кабелей, наложенные участки - один раз, с запасом"
                                                   (strcat "по каждому кабелю, с запасом: " (bk:join per "; "))))))))))))
+  ;; коробки ответвлений на приборах (ПРИМ-1 «с коробкой [марка]»): одна на каждую ветку
+  (setq vs nil)
+  (foreach c cs
+    (if (and (/= (bk:f (cadr c) "par") "") (setq mode (bk:box-mark (bk:f (cadr c) "beg"))))
+      (if (setq p (assoc mode vs))
+        (setq vs (subst (list mode (1+ (cadr p)) (append (caddr p) (list (bk:f (cadr c) "pos")))) p vs))
+        (setq vs (append vs (list (list mode 1 (list (bk:f (cadr c) "pos")))))))))
+  (foreach v vs
+    (setq rows (append rows (list (list (itoa (setq n (1+ n))) (if (= (car v) "") "Коробка ответвительная" (strcat "Коробка " (car v)))
+                                        "шт." (cadr v) (strcat "ответвления на приборах: " (bk:pos-ranges (caddr v))))))))
   rows)
 
 (defun bk:ceil1 (x) (/ (fix (+ (* x 10.0) 0.999)) 10.0))
@@ -3701,6 +3717,70 @@
         (setq go (= (getkword "\nЕщё кабель по этому пути? [Да/Нет] <Нет>: ") "Да")))
       (bk:update-leaders)))
   (princ))
+
+;;; ---------- ММ_КАБЕЛЬ_ВЕТКА: ответвление от кабеля (дерево СОУЭ, ответвления шлейфов) ----------
+;; Ветка - отдельный кабель со своей ПОЗИЦИЕЙ (по умолчанию <ПОЗИЦИЯ родителя>.1, .2 ...), той же маркой
+;; и прокладкой. Ключи XDATA: par - id родительского кабеля, lin - id корня линии (у корня = свой id).
+;; Начало ветки - блок в точке ответвления (коробка, поставленная вручную, или прибор); если блока нет -
+;; в таблицах «Начало» = «отв. от <ПОЗИЦИЯ родителя>».
+(defun bk:root-of (id / d n)
+  (setq n 0)
+  (while (and (setq d (bk:get (car (bk:segs id)))) (/= (bk:f d "par") "") (< n 50) (bk:segs (bk:f d "par")))
+    (setq id (bk:f d "par") n (1+ n)))
+  id)
+(defun bk:cmd-branch (/ es e d o p par prev-e ne pts nd pid n go)
+  (setq go T n 0)
+  (while (and go (setq es (entsel "\nЩёлкните кабель в точке ответвления <выход>: ")))
+    (if (not (setq d (bk:get (setq e (car es)))))
+      (princ "\nЭто не кабель.")
+      (progn
+        (setq o (vlax-ename->vla-object e)
+              p (vlax-curve-getClosestPointTo o (trans (cadr es) 1 0))
+              pid (bk:f d "id"))
+        (setq par (list (bk:f d "marka") (bk:f d "diam") (bk:free-pos (strcat (bk:f d "pos") ".1") nil)
+                        (bk:f d "code") (rtos (bk:fn d "h") 2 2) (rtos (max 1.0 (bk:fn d "k")) 2 2) "0"
+                        (bk:f d "layer") (bk:f d "lts") (bk:f d "floor")))
+        (if (setq par (bk:dialog par nil (strcat "Ветка от кабеля " (bk:f d "pos")
+                                                 ". После OK рисуйте полилинию от точки ответвления до прибора.")))
+          (progn
+            (setq prev-e (entlast))
+            (command "_.PLINE" (trans p 0 1))
+            (while (> (getvar "CMDACTIVE") 0) (command pause))
+            (setq ne (entlast))
+            (if (and ne (not (eq ne prev-e)) (= (cdr (assoc 0 (entget ne))) "LWPOLYLINE"))
+              (progn
+                (setq pts (bk:pts ne) nd nil)
+                (foreach kv (list (cons "id" (cdr (assoc 5 (entget ne)))) (cons "marka" (nth 0 par))
+                                  (cons "diam" (nth 1 par)) (cons "pos" (nth 2 par))
+                                  (cons "layer" (nth 7 par)) (cons "lts" (nth 8 par)) (cons "floor" (nth 9 par))
+                                  (cons "par" pid) (cons "lin" (bk:root-of pid)))
+                  (setq nd (bk:setf nd (car kv) (cdr kv))))
+                (bk:put ne nd)
+                (setq nd (bk:rebuild nd (list (list (nth 3 par) (bk:num (nth 4 par)) pts
+                                                    (bk:num (nth 5 par)) nil "" 0.0 (bk:look ne)))))
+                (setq n (1+ n))
+                (princ (strcat "\nВетка " (nth 2 par) " от " (bk:f d "pos")
+                               "  откуда: " (bk:beg-name nd) "  куда: " (bk:dev-pos (bk:f nd "end"))
+                               (if (bk:box-mark (bk:f nd "beg")) "  (коробка учитывается)" "")
+                               "  " (bk:len-text (bk:f nd "id"))))
+                (bk:upd-leaders-for (list pid (bk:f nd "id")))))))))
+    (initget "Да Нет")
+    (setq go (/= (getkword "\nЕщё ветка? [Да/Нет] <Да>: ") "Нет")))
+  (princ (strcat "\nНарисовано веток: " (itoa n) "."))
+  (princ))
+;; начало для таблиц: ПОЗИЦИЯ блока или «отв. от <родитель>»
+(defun bk:beg-name (d / pd)
+  (cond ((/= (bk:dev-pos (bk:f d "beg")) "") (bk:dev-pos (bk:f d "beg")))
+        ((and (/= (bk:f d "par") "") (setq pd (bk:get (car (bk:segs (bk:f d "par"))))))
+         (strcat "отв. от " (bk:f pd "pos")))
+        (T "")))
+;; коробка на приборе: атрибут ПРИМ-1 содержит «с коробкой» -> марка коробки ("" - без марки), иначе nil
+(defun bk:box-mark (h / s i)
+  (if (and h (/= h "") (bk:hent h))
+    (progn
+      (setq s (bk:attr (bk:hent h) "ПРИМ-1"))
+      (if (setq i (vl-string-search "С КОРОБКОЙ" (bk:up s)))
+        (vl-string-trim " ,;:()" (substr s (+ i 11)))))))
 
 ;;; ---------- ММ_КАБЕЛЬ_ЛИНИИ: обозначения типов прокладки вкл/выкл ----------
 (defun bk:cmd-lines (/ k lt c)
@@ -4751,6 +4831,9 @@
 (defun c:мм_кабель_еще ()           (bk:run 'bk:cmd-more))
 (defun c:ММ_КАБЕЛЬ_ЕЩЕ ()           (bk:run 'bk:cmd-more))
 (defun c:MM_CABLE_MORE ()           (bk:run 'bk:cmd-more))
+(defun c:мм_кабель_ветка ()         (bk:run 'bk:cmd-branch))
+(defun c:ММ_КАБЕЛЬ_ВЕТКА ()         (bk:run 'bk:cmd-branch))
+(defun c:MM_CABLE_BRANCH ()         (bk:run 'bk:cmd-branch))
 (defun c:мм_кабель_журнал ()        (bk:run 'bk:cmd-journal))
 (defun c:ММ_КАБЕЛЬ_ЖУРНАЛ ()        (bk:run 'bk:cmd-journal))
 (defun c:MM_CABLE_LOG ()             (bk:run 'bk:cmd-journal))
@@ -4778,5 +4861,6 @@
 (princ "\n  ММ_КАБЕЛЬ_ЛИНИИ         - линии по типам прокладки / все сплошные / все штриховые")
 (princ "\n  ММ_КАБЕЛЬ_ТИПЫ          - добавить / изменить способы прокладки")
 (princ "\n  ММ_КАБЕЛЬ_ЕЩЕ           - ещё кабель по пути выбранного, те же параметры")
+(princ "\n  ММ_КАБЕЛЬ_ВЕТКА         - ответвление от кабеля: своя ПОЗИЦИЯ, связь с линией")
 (princ "\n==================================================================")
 (princ)
