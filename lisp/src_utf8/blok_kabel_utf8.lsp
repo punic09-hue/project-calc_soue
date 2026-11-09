@@ -976,16 +976,83 @@
   (bk:join out "\\P"))
 
 ;; строки кабелей: по шаблону; при "объединять" одинаковые строки - в одну, {ПОЗ} через запятую
-(defun bk:leader-text (ids / f grp d t1 p gr)
+(defun bk:leader-text (ids / f grp d t1 p gr ps)
   (setq f (bk:ldfmt) gr (= (nth 1 f) "1"))
   (foreach id ids
     (setq d (bk:get (car (bk:segs id)))
-          t1 (bk:fmt (car f) (bk:cvars id d (if gr "\001" (bk:f d "pos"))) nil))
+          ;; кратность: кабель проходит точку выноски n раз (туда и обратно) -> «k1 (2)»
+          ps (if (and (assoc id *bk:ldm*) (> (cdr (assoc id *bk:ldm*)) 1))
+               (strcat (bk:f d "pos") " (" (itoa (cdr (assoc id *bk:ldm*))) ")") (bk:f d "pos"))
+          t1 (bk:fmt (car f) (bk:cvars id d (if gr "\001" ps)) nil))
     (if (and gr (setq p (assoc t1 grp)))
-      (setq grp (subst (append p (list (bk:f d "pos"))) p grp))
-      (setq grp (append grp (list (list t1 (bk:f d "pos")))))))
+      (setq grp (subst (append p (list ps)) p grp))
+      (setq grp (append grp (list (list t1 ps))))))
   (bk:join (mapcar '(lambda (g) (bk:ld-wrap (bk:subst-all (car g) "\001" (bk:mtx (bk:pos-ranges (vl-remove "" (cdr g))))) 40)) grp)
            "\\P"))
+
+;; ---------- кратность прохода кабеля ----------
+;; сколько раз кабель id проходит через точку p (отрезки всех его участков в пределах допуска,
+;; точка - внутри отрезка): 2 - туда и обратно по одной линии
+(defun bk:pass-n (id p / n pts a b dx dy l2 u q tol)
+  (setq n 0 tol (+ *bk:otol* 1.0) p (bk:2d p))
+  (foreach e (bk:segs id)
+    (setq pts (bk:pts e))
+    (while (cdr pts)
+      (setq a (car pts) b (cadr pts) pts (cdr pts)
+            dx (- (car b) (car a)) dy (- (cadr b) (cadr a)) l2 (+ (* dx dx) (* dy dy)))
+      (if (> l2 1e-12)
+        (progn
+          (setq u (/ (+ (* (- (car p) (car a)) dx) (* (- (cadr p) (cadr a)) dy)) l2)
+                q (list (+ (car a) (* u dx)) (+ (cadr a) (* u dy))))
+          (if (and (> u 1e-4) (< u (- 1.0 1e-4)) (<= (distance p q) tol)) (setq n (1+ n)))))))
+  (max 1 n))
+;; кратности кабелей в точке выноски e: ((id . n) ...)
+(defun bk:ld-mult (e ids / v p)
+  (setq v (vl-catch-all-apply 'vlax-invoke (list (vlax-ename->vla-object e) 'GetLeaderLineVertices 0)))
+  (if (and (not (vl-catch-all-error-p v)) (>= (length v) 2)) (setq p (list (car v) (cadr v))))
+  (if p (mapcar '(lambda (id) (cons id (bk:pass-n id p))) ids)))
+;; полный текст выноски кабелей (с кратностью)
+(defun bk:ld-full (e ids / r)
+  (setq *bk:ldm* (vl-catch-all-apply 'bk:ld-mult (list e ids)))
+  (if (vl-catch-all-error-p *bk:ldm*) (setq *bk:ldm* nil))
+  (setq r (bk:ld-full e ids) *bk:ldm* nil)
+  r)
+;; все проходы кабеля id по отрезку p1-p2: ((e a b) ...) - параметры на полилиниях
+(defun bk:pieces-on (id p1 p2 / out tol pts i a b dx dy l2 u1 u2 q1 q2)
+  (setq tol (+ *bk:otol* 1.0) p1 (bk:2d p1) p2 (bk:2d p2))
+  (foreach e (bk:segs id)
+    (setq pts (bk:pts e) i 0)
+    (while (cdr pts)
+      (setq a (car pts) b (cadr pts) pts (cdr pts)
+            dx (- (car b) (car a)) dy (- (cadr b) (cadr a)) l2 (+ (* dx dx) (* dy dy)))
+      (if (> l2 1e-12)
+        (progn
+          (setq u1 (/ (+ (* (- (car p1) (car a)) dx) (* (- (cadr p1) (cadr a)) dy)) l2)
+                u2 (/ (+ (* (- (car p2) (car a)) dx) (* (- (cadr p2) (cadr a)) dy)) l2)
+                q1 (list (+ (car a) (* u1 dx)) (+ (cadr a) (* u1 dy)))
+                q2 (list (+ (car a) (* u2 dx)) (+ (cadr a) (* u2 dy))))
+          (if (and (<= (distance p1 q1) tol) (<= (distance p2 q2) tol)
+                   (>= (min u1 u2) -1e-3) (<= (max u1 u2) 1.001) (> (abs (- u2 u1)) 1e-6))
+            (setq out (cons (list e (+ i (max 0.0 (min u1 u2))) (+ i (min 1.0 (max u1 u2)))) out)))))
+      (setq i (1+ i))))
+  (reverse out))
+;; участок уже имеет параметры r (code h k sz md ex ...)
+(defun bk:seg-same (e r / d)
+  (setq d (bk:get e))
+  (and (= (bk:f d "code") (car r)) (equal (bk:fn d "k") (caddr r) 1e-6) (= (bk:f d "sz") (cadddr r))
+       (equal (bk:fn d "md") (nth 4 r) 1e-6) (= (bk:f d "ex") (nth 5 r))
+       (or (= (cadr r) "") (equal (bk:fn d "h") (bk:num (cadr r)) 1e-6))))
+;; применить параметры участка r ко ВСЕМ проходам кабеля id по отрезку p1-p2 -> число изменённых
+(defun bk:apply-passes (id p1 p2 r / n go c)
+  (setq n 0 go T)
+  (while (and go (< n 20))
+    (setq c (vl-some '(lambda (x) (if (not (bk:seg-same (car x) r)) x)) (bk:pieces-on id p1 p2)))
+    (if c
+      (progn (bk:set-piece (car c) (cadr c) (caddr c) (car r)
+                           (if (/= (cadr r) "") (bk:num (cadr r))) (caddr r) (cadddr r) (nth 4 r) (nth 5 r) (nth 6 r))
+             (setq n (1+ n)))
+      (setq go nil)))
+  n)
 
 ;; нижняя строка выноски кабелей: в чём прокладываются кабели в точке выноски
 ;; (точка - начало линии выноски); если в точке их нет - способы всех участков кабелей
@@ -1179,7 +1246,7 @@
         (vl-catch-all-apply 'vla-put-ContentType (list (vlax-ename->vla-object e) acMTextContent))
         (if (not (vl-catch-all-error-p
                    (vl-catch-all-apply 'vla-put-TextString
-                     (list (vlax-ename->vla-object e) (strcat (bk:leader-text (cdr m)) (bk:ld-prokl e (cdr m)))))))
+                     (list (vlax-ename->vla-object e) (bk:ld-full e (cdr m))))))
           (setq *bk:ldn* (1+ *bk:ldn*)))
         (vl-catch-all-apply 'bk:ld-style (list e)))))
   ;; выноски стояков
@@ -1306,7 +1373,7 @@
     (if (and (setq e (bk:hent h)) (entget e) (= (cdr (assoc 0 (entget e))) "MULTILEADER") (cdr (assoc h lm)))
       (progn
         (vl-catch-all-apply 'vla-put-TextString
-          (list (vlax-ename->vla-object e) (strcat (bk:leader-text (cdr (assoc h lm))) (bk:ld-prokl e (cdr (assoc h lm))))))
+          (list (vlax-ename->vla-object e) (bk:ld-full e (cdr (assoc h lm)))))
         (vl-catch-all-apply 'bk:ld-style (list e)))))
   (length hs))
 
@@ -1324,7 +1391,7 @@
               (foreach m (cadr ix) (if (vl-some '(lambda (i) (member i ers)) (cdr m)) (setq lh (cons (car m) lh))))
               (foreach h lh
                 (if (and (setq e (bk:hent h)) (entget e) (setq ids (cdr (assoc h (cadr *bk:cidx*)))))
-                  (progn (vl-catch-all-apply 'vla-put-TextString (list (vlax-ename->vla-object e) (strcat (bk:leader-text ids) (bk:ld-prokl e ids))))
+                  (progn (vl-catch-all-apply 'vla-put-TextString (list (vlax-ename->vla-object e) (bk:ld-full e ids)))
                          (vl-catch-all-apply 'bk:ld-style (list e))))))))
     (qe (bk:cidx-reset))
     (T
@@ -2151,8 +2218,11 @@
           (setq *bk:sc* nil ids nil)
           (foreach c cabs
             (if (not (member (car c) ids))
-              (setq ids (cons (car c) ids) dd (bk:get (cadr c))
-                    *bk:sc* (append *bk:sc* (list (list (bk:f dd "pos") (bk:fn dd "diam") (bk:f dd "marka")))))))
+              (progn
+                (setq ids (cons (car c) ids) dd (bk:get (cadr c)))
+                ;; кратность: кабель на участке n раз (туда и обратно) - n строк в сечении
+                (repeat (bk:pass-n (car c) (bk:mid q1 q2))
+                  (setq *bk:sc* (append *bk:sc* (list (list (bk:f dd "pos") (bk:fn dd "diam") (bk:f dd "marka")))))))))
           (foreach c cabs (redraw (cadr c) 3))
           (setq *bk:segex* (bk:f d "ex") *bk:segfl* "")
           (setq r (bk:seg-dialog (bk:f d "code") "" (bk:r (bk:fn d "k") 2) (bk:f d "sz") (bk:fn d "md")))
@@ -2160,10 +2230,8 @@
           (if r
             (progn
               ;; по каждому куску: сегмент ищется заново (после пересборки кабеля сегменты новые)
-              (foreach c cabs
-                (if (setq pc (bk:piece-of (car c) (caddr c) (cadddr c)))
-                  (bk:set-piece (car pc) (cadr pc) (caddr pc) (car r)
-                                (if (/= (cadr r) "") (bk:num (cadr r))) (caddr r) (cadddr r) (nth 4 r) (nth 5 r) (nth 6 r))))
+              ;; все проходы каждого кабеля (туда и обратно) - каждый свой отрезок
+              (foreach i ids (bk:apply-passes i (caddr (assoc i cabs)) (cadddr (assoc i cabs)) r))
               (bk:upd-leaders-for ids)
               (princ (strcat "\nУчасток: " (bk:tname (car r)) (if (/= (cadddr r) "") (strcat " " (cadddr r)) "")
                              ", кабелей: " (itoa (length cabs)) " ("
@@ -2186,7 +2254,12 @@
 
 ;; ММ_КАБЕЛЬ_УЧАСТОК областью: все отрезки (между соседними вершинами) всех кабелей, попавшие в рамку;
 ;; параметры из окна - всем этим кускам; пересчитываются только затронутые кабели и их выноски
-(defun bk:do-area (c1 c2 / lo hi ss pcs pts a b d id ids r pc e1 n)
+(defun bk:same-edge (x y / tol)       ; отрезки (id e a b) совпадают геометрически (в любом направлении)
+  (setq tol (+ *bk:otol* 1.0))
+  (or (and (< (distance (caddr x) (caddr y)) tol) (< (distance (cadddr x) (cadddr y)) tol))
+      (and (< (distance (caddr x) (cadddr y)) tol) (< (distance (cadddr x) (caddr y)) tol))))
+(defun bk:mid (a b) (list (/ (+ (car a) (car b)) 2.0) (/ (+ (cadr a) (cadr b)) 2.0)))
+(defun bk:do-area (c1 c2 / lo hi ss pcs pts a b d id ids r pc e1 n done)
   (setq lo (list (min (car c1) (car c2)) (min (cadr c1) (cadr c2)))
         hi (list (max (car c1) (car c2)) (max (cadr c1) (cadr c2))))
   (setq ss (ssget "_C" (trans c1 0 1) (trans c2 0 1) '((-3 ("BK")))))
@@ -2205,8 +2278,12 @@
       (setq *bk:sc* nil ids nil)
       (foreach c pcs
         (if (not (member (car c) ids))
-          (setq ids (cons (car c) ids) d (bk:get (cadr c))
-                *bk:sc* (append *bk:sc* (list (list (bk:f d "pos") (bk:fn d "diam") (bk:f d "marka")))))))
+          (progn
+            (setq ids (cons (car c) ids) d (bk:get (cadr c)))
+            ;; кратность - наибольшее число совпадающих отрезков кабеля в области
+            (repeat (apply 'max (mapcar '(lambda (x) (length (vl-remove-if-not '(lambda (y) (and (= (car y) (car c)) (bk:same-edge y x))) pcs)))
+                                        (vl-remove-if-not '(lambda (y) (= (car y) (car c))) pcs)))
+              (setq *bk:sc* (append *bk:sc* (list (list (bk:f d "pos") (bk:fn d "diam") (bk:f d "marka")))))))))
       (setq ids (reverse ids) e1 (cadr (car pcs)) d (bk:get e1))
       (foreach c pcs (redraw (cadr c) 3))
       (setq *bk:segex* (bk:f d "ex") *bk:segfl* "")
@@ -2215,11 +2292,11 @@
       (if r
         (progn
           (setq n 0)
+          ;; каждый отрезок (с учётом проходов туда и обратно) - один раз на уникальную геометрию
+          (setq done nil)
           (foreach c pcs
-            (if (setq pc (bk:piece-of (car c) (caddr c) (cadddr c)))
-              (progn (bk:set-piece (car pc) (cadr pc) (caddr pc) (car r)
-                                   (if (/= (cadr r) "") (bk:num (cadr r))) (caddr r) (cadddr r) (nth 4 r) (nth 5 r) (nth 6 r))
-                     (setq n (1+ n)))))
+            (if (not (vl-some '(lambda (y) (and (= (car y) (car c)) (bk:same-edge y c))) done))
+              (progn (setq n (+ n (bk:apply-passes (car c) (caddr c) (cadddr c) r)) done (cons c done)))))
           (bk:upd-leaders-for ids)
           (princ (strcat "\nОбласть: " (bk:tname (car r)) (if (/= (cadddr r) "") (strcat " " (cadddr r)) "")
                          ", отрезков: " (itoa n) ", кабелей: " (itoa (length ids)) " ("
@@ -3589,7 +3666,7 @@
           ;; только новая выноска (не все выноски чертежа)
           (bk:ensure-style (nth 9 (bk:ldfmt)))
           (vla-put-ContentType ml acMTextContent)
-          (vl-catch-all-apply 'vla-put-TextString (list ml (strcat (bk:leader-text ids) (bk:ld-prokl e ids))))
+          (vl-catch-all-apply 'vla-put-TextString (list ml (bk:ld-full e ids)))
           (vl-catch-all-apply 'bk:ld-style (list e))
           (princ (strcat "\nВыноска создана для кабелей: " (itoa (length ids))
                          ". Параметры: ММ_КАБЕЛЬ_ВЫНОСКА_ПАРАМ."))))))
@@ -3667,6 +3744,8 @@
 (defun bk:pl-text (p / cs c nm names md sz sm vars)
   (if (and p (setq cs (bk:segs-at p)))
     (progn
+      ;; кратность: кабель, проходящий точку n раз (туда и обратно), - n кабелей в пучке
+      (setq cs (apply 'append (mapcar '(lambda (x / l) (repeat (bk:pass-n (car x) p) (setq l (cons x l))) l) cs)))
       (setq c (bk:grp-calc (mapcar 'cadr cs)) md (nth 3 (car cs)) sz (nth 4 (car cs)))
       (foreach x cs
         (setq nm (bk:pl-name-ex (nth 2 x) (nth 3 x) (nth 4 x) (if (nth 6 x) (nth 6 x) "")))
