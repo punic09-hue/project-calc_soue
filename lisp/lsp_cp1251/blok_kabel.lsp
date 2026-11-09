@@ -1015,7 +1015,7 @@
 (defun bk:ld-full (e ids / r)
   (setq *bk:ldm* (vl-catch-all-apply 'bk:ld-mult (list e ids)))
   (if (vl-catch-all-error-p *bk:ldm*) (setq *bk:ldm* nil))
-  (setq r (bk:ld-full e ids) *bk:ldm* nil)
+  (setq r (strcat (bk:leader-text ids) (bk:ld-prokl e ids)) *bk:ldm* nil)
   r)
 ;; все проходы кабеля id по отрезку p1-p2: ((e a b) ...) - параметры на полилиниях
 (defun bk:pieces-on (id p1 p2 / out tol pts i a b dx dy l2 u1 u2 q1 q2)
