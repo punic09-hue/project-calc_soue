@@ -501,9 +501,13 @@
       (if r (setq *bk:sidx* (cons (cons id (cdr (assoc 5 (entget (car r))))) (vl-remove (assoc id *bk:sidx*) *bk:sidx*))))
       r)))
 
-(defun bk:pts (e / c l)
-  (setq c (vlax-get (vlax-ename->vla-object e) 'Coordinates))
-  (while c (setq l (cons (list (car c) (cadr c)) l) c (cddr c)))
+(defun bk:pts (e / c l z n)
+  ;; координаты LWPOLYLINE - в её ОСК; если полилиния отражена/повёрнута (нормаль не 0,0,1) - перевод в МСК
+  (setq c (vlax-get (vlax-ename->vla-object e) 'Coordinates)
+        n (cdr (assoc 210 (entget e))) z (cond ((cdr (assoc 38 (entget e)))) (0.0)))
+  (if (or (null n) (equal n '(0.0 0.0 1.0) 1e-9))
+    (while c (setq l (cons (list (car c) (cadr c)) l) c (cddr c)))
+    (while c (setq l (cons (bk:2d (trans (list (car c) (cadr c) z) e 0)) l) c (cddr c))))
   (reverse l))
 
 ;; выбор кабелей: щелчок в точку -> все кабели в этой точке (в т.ч. наложенные),
@@ -3720,6 +3724,14 @@
                 (and (cadr best) (not bs))                         ; обычный участок важнее стояка
                 (and (eq (cadr best) bs) (< (car r) (car best))))
           (setq best (list (car r) bs) bq (cadr r))))))
+  ;; запасной путь: выбор рамкой мог не сработать (вид, ПСК) - проверить все участки чертежа
+  (if (null bq)
+    (foreach e (bk:all-segs)
+      (if (and (setq r (bk:pl-near e p)) (<= (car r) tol))
+        (progn
+          (setq bs (bk:stc (bk:f (bk:get e) "code")))
+          (if (or (null best) (and (cadr best) (not bs)) (and (eq (cadr best) bs) (< (car r) (car best))))
+            (setq best (list (car r) bs) bq (cadr r)))))))
   (if (null bq)
     (princ (strcat "\nВ точке нет кабелей (прицел " (rtos tol 2 2) ").")))
   (foreach e (if bq (bk:segs-near bq (+ *bk:otol* 1.0)))
@@ -3882,14 +3894,20 @@
 (defun bk:st-ids (q1 q2)
   (mapcar 'car (vl-remove-if-not '(lambda (x) (bk:stc (bk:f (bk:get (cadr x)) "code"))) (bk:on-piece q1 q2))))
 
-(defun bk:st-text (e / g ids fl)
+(defun bk:st-text (e / g ids fl r)
   (if (and (setq g (bk:st-get e)) (setq ids (bk:st-ids (car g) (cadr g))))
     (progn
+      ;; кратность: один кабель несколькими участками-стояками (кольцо) -> «k1 (2)»
+      (setq *bk:ldm* nil)
+      (foreach i ids (setq *bk:ldm* (if (assoc i *bk:ldm*) (subst (cons i (1+ (cdr (assoc i *bk:ldm*)))) (assoc i *bk:ldm*) *bk:ldm*) (cons (cons i 1) *bk:ldm*))))
+      (setq ids (bk:uniq ids))
       (setq fl (bk:blk-floor (if (= (caddr g) 0) (cadr g) (car g))))
       (if (= fl "") (setq fl "?"))
-      (strcat (bk:leader-text ids) "\\P"
+      (setq r (strcat (bk:leader-text ids) "\\P"
               ;; всегда «на … этаж» (этаж другого конца стояка), направление не определяется
-              (bk:fmt (nth 7 (bk:ldfmt)) (list (cons "ЭТАЖ" (bk:fl-bare fl (nth 7 (bk:ldfmt))))) nil)))
+              (bk:fmt (nth 7 (bk:ldfmt)) (list (cons "ЭТАЖ" (bk:fl-bare fl (nth 7 (bk:ldfmt))))) nil))
+            *bk:ldm* nil)
+      r)
     "стояк: кабелей нет"))
 
 (defun bk:st-make (pt lp q1 q2 k lts / arr ml e par)
