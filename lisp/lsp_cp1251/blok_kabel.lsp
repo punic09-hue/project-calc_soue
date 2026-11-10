@@ -3645,10 +3645,12 @@
           ;; не попали точно - щелчок по самому кабелю, точка выноски - ближайшая на нём
           (while (and (null ids) (setq es (entsel "\nВ точке нет кабелей. Щёлкните по кабелю (Enter - выход): ")))
             (if (bk:get (car es))
-              (setq ap (trans (vlax-curve-getClosestPointTo (vlax-ename->vla-object (car es)) (trans (cadr es) 1 0)) 0 1)
-                    ids (mapcar 'car (bk:no-st (bk:segs-at (trans ap 1 0)))))
-              ;; на крайний случай - хотя бы выбранный кабель
-              (if (null ids) (setq ids (list (bk:f (bk:get (car es)) "id"))))))
+              (progn
+                (setq ap (trans (vlax-curve-getClosestPointTo (vlax-ename->vla-object (car es)) (trans (cadr es) 1 0)) 0 1)
+                      ids (mapcar 'car (bk:no-st (bk:segs-at (trans ap 1 0)))))
+                ;; на крайний случай - хотя бы выбранный кабель
+                (if (null ids) (setq ids (list (bk:f (bk:get (car es)) "id")))))
+              (princ "\nЭто не кабель.")))
           (if (null ids) (setq ap nil))))
       (if (and ap (setq lp (getpoint ap "\nПоложение текста: ")))
         (progn
@@ -3734,7 +3736,8 @@
             (setq best (list (car r) bs) bq (cadr r)))))))
   (if (null bq)
     (princ (strcat "\nВ точке нет кабелей (прицел " (rtos tol 2 2) ").")))
-  (foreach e (if bq (bk:segs-near bq (+ *bk:otol* 1.0)))
+  ;; рамка - по прицелу (окно в 1-2 ед. чертежа при мелком масштабе меньше пикселя и ничего не выбирает)
+  (foreach e (if bq (bk:segs-near bq tol))
     (setq d (bk:get e) id (bk:f d "id"))
     (if (and (not (assoc id out))
              (or (cadr best) (not (bk:stc (bk:f d "code"))))           ; у обычного участка стояки в точке не берутся
