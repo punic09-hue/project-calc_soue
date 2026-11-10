@@ -3625,7 +3625,22 @@
   (princ (strcat "\nПересобрано кабелей: " (itoa (length ids)) ".")))
 
 ;;; ---------- ММ_КАБЕЛЬ_ВЫНОСКА ----------
-(defun bk:cmd-leader (/ ids ap lp arr ml e p lts par h hs ka es)
+;; кабели, пересекающие рамку c1-c2 (МСК): (точка_начала_выноски id ...); стояки - только если нет обычных
+(defun bk:ids-in-box (c1 c2 / lo hi cen segs ord st best bd q o ids)
+  (setq lo (list (min (car c1) (car c2)) (min (cadr c1) (cadr c2)))
+        hi (list (max (car c1) (car c2)) (max (cadr c1) (cadr c2)))
+        cen (bk:mid lo hi))
+  (foreach e (bk:ss->l (ssget "_C" (trans c1 0 1) (trans c2 0 1) '((-3 ("BK")))))
+    (if (bk:get e)
+      (if (bk:stc (bk:f (bk:get e) "code")) (setq st (cons e st)) (setq ord (cons e ord)))))
+  (setq segs (if ord ord st))
+  (foreach e segs
+    (setq o (vlax-ename->vla-object e)
+          q (bk:2d (vlax-curve-getClosestPointTo o (list (car cen) (cadr cen) 0.0))))
+    (if (or (null bd) (< (distance q cen) bd)) (setq bd (distance q cen) best q))
+    (if (not (member (bk:f (bk:get e) "id") ids)) (setq ids (append ids (list (bk:f (bk:get e) "id"))))))
+  (if ids (cons (list (car best) (cadr best) 0.0) ids)))
+(defun bk:cmd-leader (/ ids ap lp arr ml e p lts par h hs ka es c2)
   (if (/= (length *bk:ld*) 4) (setq *bk:ld* (list (nth 0 *bk:ld*) (nth 1 *bk:ld*) (nth 2 *bk:ld*) "0")))
   ;; режим: все кабели на участке (галочка, запоминается) или выбор кабелей
   (initget "Да Нет")
@@ -3635,13 +3650,17 @@
   (if (if (= (nth 3 *bk:ld*) "1") T (setq ids (bk:pick-ids "\nВыберите кабели для общей выноски: ")))
     (progn
       (while (progn (initget "Параметры Формат")
-                    (member (setq ap (getpoint "\nТочка на кабеле (начало выноски) [Параметры/Формат]: ")) '("Параметры" "Формат")))
+                    (member (setq ap (getpoint (if (= (nth 3 *bk:ld*) "1")
+                                                 "\nПервый угол рамки на кабелях (выноска - на кабели в рамке) [Параметры/Формат]: "
+                                                 "\nТочка на кабеле (начало выноски) [Параметры/Формат]: ")))
+                            '("Параметры" "Формат")))
         (if (= ap "Формат") (bk:cmd-ldfmt)
           (if (setq p (bk:ld-dialog *bk:ld*)) (setq *bk:ld* p))))
       (if (and ap (= (nth 3 *bk:ld*) "1"))
         (progn
-          (setq ids (bk:segs-at (trans ap 1 0)))
-          (setq ids (mapcar 'car (bk:no-st ids)))
+          ;; выбор рамкой: кабели, пересекающие рамку; начало выноски - на ближайшем к центру рамки кабеле
+          (setq ids (if (setq c2 (getcorner ap "\nВторой угол рамки: ")) (bk:ids-in-box (trans ap 1 0) (trans c2 1 0))))
+          (if ids (setq ap (trans (car ids) 0 1) ids (cdr ids)))
           ;; не попали точно - щелчок по самому кабелю, точка выноски - ближайшая на нём
           (while (and (null ids) (setq es (entsel "\nВ точке нет кабелей. Щёлкните по кабелю (Enter - выход): ")))
             (if (bk:get (car es))
